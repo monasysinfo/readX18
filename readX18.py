@@ -1,6 +1,10 @@
 #!/usr/bin/python3
 # -*- coding: utf8 -*-
 '''
+readX18.py
+16/12/2020
+Jean-Yves Priou lemonasterien@gmail.com
+
 Lecture des données émise par la Behringer X18
 Relais ces données sur ipad/lemur
 
@@ -48,17 +52,17 @@ class BridgeX18toIpad(object):
         Connect to IPAD
         TODO: Test if self.ipad_address is a valid  host
         '''
-    
+
         try:
             self.ipad_client = SimpleUDPClient(self.ipad_address, self.ipad_port)
             logging.info("connect IPAD OK")
             self.ipad_client.send_message("/Connexion/value", 'Connnect Ipad OK')
             return True
-            
+
         except:
             E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
             logging.error("cannot connect to IPAD %s" % E)
-            return False 
+            return False
 
     def connectX18(self):
         '''
@@ -67,9 +71,9 @@ class BridgeX18toIpad(object):
         '''
 
         self.server = OSC.OSCServer(("", self.x18_port))
-        # This makes sure that client and server uses same socket. 
+        # This makes sure that client and server uses same socket.
         # This has to be this way, as the X32 sends notifications back to same port as the /xremote message came from
-        self.client = OSC.OSCClient(server=self.server) 
+        self.client = OSC.OSCClient(server=self.server)
         tried = 20
         E = None
         while tried > 0:
@@ -94,9 +98,9 @@ class BridgeX18toIpad(object):
         mixing desk to make sure changes are transmitted to our server.
         """
         t = threading.currentThread()
-        
-        while getattr(t, "active"):     
-            try:   
+
+        while getattr(t, "active"):
+            try:
                 client.send(OSC.OSCMessage("/xremote"))
                 time.sleep(7)
             except:
@@ -104,26 +108,26 @@ class BridgeX18toIpad(object):
                 logging.error(E)
 
 
-    def relay_msg_to_Ipad(self,addr, tags, data, client_address):        
-        
+    def relay_msg_to_Ipad(self,addr, tags, data, client_address):
+
         logging.debug('%s : %s' % (addr.decode('utf8'),data))
         self.ipad_client.send_message(addr.decode('utf8'), data)
-        
-    def get_all_x18_change_messages(self):       
-       
+
+    def get_all_x18_change_messages(self):
+
         self.server.addMsgHandler("default", self.relay_msg_to_Ipad)
 
         thread = threading.Thread(target=self.request_x18_to_send_change_notifications, kwargs = {"client": self.client})
         thread.active = True
-        thread.start()   
+        thread.start()
         logging.info("X18 Listener Started")
 
         try:
-            logging.info("Starting Listener")                
-            self.server.serve_forever()        
+            logging.info("Starting Listener")
+            self.server.serve_forever()
         except (KeyboardInterrupt, SystemExit):
             thread.active = False
-            logging.info("Waiting for complete shutdown..")        
+            logging.info("Waiting for complete shutdown..")
             thread.join()
             return
 
@@ -133,7 +137,7 @@ def listenX18(ipad_address=None, ipad_port=None, x18_address=None, x18_port=None
         bx18.get_all_x18_change_messages()
     else:
         logging.error(bx18.status)
-    
+
 
 def decodeArgs():
     '''
@@ -160,8 +164,8 @@ def msg():
         '''%sys.argv[0]
 
 if __name__ == '__main__':
-    
-    
+
+
     arg_analyze=decodeArgs()
     ipad_address = arg_analyze.ipadadd
     ipad_port = arg_analyze.ipadport
@@ -173,7 +177,7 @@ if __name__ == '__main__':
 
     try:
         os.mkfifo(SYNCHRO)
-    except OSError as oe: 
+    except OSError as oe:
         if oe.errno != errno.EEXIST:
             raise
 
@@ -184,10 +188,7 @@ if __name__ == '__main__':
         sync = fifo.read()
         fifo.close()
 
-    logging.info('Syncho OK, start X18 listener') 
+    logging.info('Syncho OK, start X18 listener')
 
 
     listenX18(ipad_address=ipad_address, ipad_port=ipad_port, x18_address=x18_address, x18_port=x18_port)
-    
-
-    

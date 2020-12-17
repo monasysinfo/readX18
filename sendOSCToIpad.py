@@ -1,8 +1,12 @@
 #!/usr/bin/python3
 # -*- coding: utf8 -*-
 '''
+sendOSCToIpad.py
+16/12/2020
+Jean-Yves Priou lemonasterien@gmail.com
+
 Ce programme assure le relais entre LEMUR sur IPAD et la Behringer X18
-L'envoie direct de commande OSC depuis LEMUR vers la X18 ne fonctionnant pas 
+L'envoie direct de commande OSC depuis LEMUR vers la X18 ne fonctionnant pas
 '''
 
 from pythonosc.dispatcher import Dispatcher
@@ -53,7 +57,7 @@ class X18ToIpadRelay():
         self.srv_address = srv_address
         self.srv_port = srv_port
         self.x18_address = x18_address
-        self.x18_port = x18_port        
+        self.x18_port = x18_port
         self.dispatcher = Dispatcher()
         self.dispatcher.map("/ch/*", self.ch_handler)
         self.dispatcher.set_default_handler(self.default_handler)
@@ -74,10 +78,10 @@ class X18ToIpadRelay():
                 self.server = BlockingOSCUDPServer((self.srv_address, self.srv_port), self.dispatcher)
                 logging.info('Ipad listener started')
                 break
-               
+
             except:
                 E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
-                logging.info('Re-try opening Ipad listener ... %s' % TRIED)                    
+                logging.info('Re-try opening Ipad listener ... %s' % TRIED)
                 TRIED -= 1
                 time.sleep(SLEEP)
 
@@ -91,17 +95,17 @@ class X18ToIpadRelay():
                 fifo.write('sync')
                 fifo.close()
 
-            logging.info('Synchro OK, starting server ...')    
+            logging.info('Synchro OK, starting server ...')
 
             try:
-                self.server.serve_forever()  # Blocks forever          
-            except (KeyboardInterrupt, SystemExit):        
-                logging.info("Shutdown server..")        
+                self.server.serve_forever()  # Blocks forever
+            except (KeyboardInterrupt, SystemExit):
+                logging.info("Shutdown server..")
                 return
 
     def connectX18(self):
         #TODO: Envoyer un message pour valider la connexion , le simple client UDP ne suffit pas
-        global TRIED        
+        global TRIED
         global SLEEP
         global NBTRY
 
@@ -111,7 +115,7 @@ class X18ToIpadRelay():
                 logging.info('Trying connect X18... %s' % TRIED)
                 self.oscclientx18 = SimpleUDPClient(self.x18_address, self.x18_port)
                 self.oscclientx18.send_message('/nop', '')
-                break    
+                break
             except:
                 logging.info('Re-trying connect X18... %s' % TRIED)
                 E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
@@ -142,27 +146,26 @@ class X18ToIpadRelay():
         self.oscclientx18.send_message(address, value)
 
 def startServer(srv_address=None, srv_port=None, x18_address=None, x18_port=None):
-    relay = X18ToIpadRelay(srv_address=srv_address, srv_port=srv_port, x18_address=x18_address, x18_port=x18_port) 
+    relay = X18ToIpadRelay(srv_address=srv_address, srv_port=srv_port, x18_address=x18_address, x18_port=x18_port)
     if relay.status is not None:
         logging.error(relay.status)
 
 
 if __name__ == '__main__':
-    
+
     arg_analyze=decodeArgs()
     srv_address = arg_analyze.srvadd
     srv_port = arg_analyze.srvport
     x18_address = arg_analyze.x18add
     x18_port = arg_analyze.x18port
     loglevel = arg_analyze.loglevel
-    
+
     logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - readX18 : %(message)s', datefmt='%Y%m%d%I%M%S ')
 
     try:
         os.mkfifo(SYNCHRO)
-    except OSError as oe: 
+    except OSError as oe:
         if oe.errno != errno.EEXIST:
             raise
 
     startServer(srv_address=srv_address, srv_port=srv_port, x18_address=x18_address, x18_port=x18_port)
-    

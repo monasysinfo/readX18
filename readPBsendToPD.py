@@ -2,7 +2,10 @@
 # -*- coding: utf8 -*-
 #####################################################################
 # readPBsendToPD.py
+# 16/12/2020
+# Jean-Yves Priou lemonasterien@gmail.com
 # Read bluetooth keyboad and send red keys to PD over UDP
+
 ######################################################################
 import socket
 import evdev
