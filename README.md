@@ -1,10 +1,10 @@
 # readX18
-#Pilotage Behringer X18, Lemur sur Ipad,Pure Data, Elektron Digitakt, Bluetooth PedalBoard.
-##Jean-Yves Priou lemonasterien@gmail.com
-##17/12/2020
+# Pilotage Behringer X18, Lemur sur Ipad,Pure Data, Elektron Digitakt, Bluetooth PedalBoard.
+## Jean-Yves Priou lemonasterien@gmail.com
+## 17/12/2020
 
 
-##Pilotage Behringer X18
+## Pilotage Behringer X18
 Ce module permet de lire les données de la table Behringer X18
 1. Tous les changements réalisés sur la table (volume, Eq ...à sont transmises à ce module via une connexion OSC.
 2. Tous les changements recus de la X18 sont relayé vers l'application Lemur qui est active sur un Ipad.
@@ -15,13 +15,13 @@ Ce module est développé en Python 3, il est nommé **readX18.py**.
 Il utilise la classe OSC.py développé par  *Daniel Holth & Clinton McChesney* (https://github.com/tjoracoder/python-x32)
 Cette classe à été adaptée pour Python 3
 
-##Lemur sur Ipad
+## Lemur sur Ipad
 Ce module permet de lires les commandes OSC envoyés par Lemur et de les router vers la X18.
 Lemur est une application Ipad qui permet de concevoir des interface utilisateur orienté Table de mixage/Surface de contrôle.
 
 Ce module est développé en Python 3, il est nommé **sendOSCToIpad.py**.
 
-##BlueTooth PedalBoard
+## BlueTooth PedalBoard
 Ce module permet le lire des données emisent par un pédalier BlueTooth puis de les relayer vers la Elektron Digitakt via Pure Data.
 
 Ce module est développé en Python 3, il est nommé **readPBsendToPD.py**.
@@ -35,7 +35,7 @@ Il permet de relayer les touches **START/STOP** **PGM NETX/PREV** **MUTE ALL** *
 * UNMUTE ALL		UnMute toutes les pistes. (touche "1")
 * TAP TEMPO 		Permet de modifier le tempo (touche "9")
 
-##Pure Data
+## Pure Data
 Ce module permet de piloter la BAR Elektron Digitakt.
 
 Les modules Pure Data se nomment:
@@ -45,16 +45,16 @@ Les modules Pure Data se nomment:
 Ces modules permettent d'envoyer les commandes MIDI vers Elektron Digitakt.
 Il reçoivent eux même les commande du module **readPBsendToPD.py** au travers d'une connexion UDP.
 
-##Elektron Digitakt
+## Elektron Digitakt
 C'est la BAR cible de cette architecture.
 Les modules **BlueTooth PedalBoard** et **Pure Data** on pour but de piloter cette BAR (start,top,tempo,pgm change).
 
-##Démarrage
+## Démarrage
 Tous ces modules sont lancés en mode daemon au démarrage du RaspBerry var /etc/rc.local.
 Les modules **Lemur sur Ipad** et **Pilotage Behringer X18** sont dépendants:
 **Pilotage Behringer X18** ne démarre qu'après le démarrage et la connexion au réseau de **Lemur sur Ipad**.
 
-##Architecture
+## Architecture
 TODO: Schéma
 
 
