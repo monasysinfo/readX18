@@ -1,0 +1,10 @@
+OK   : Voir pgm change -> ok dans python, rien dans BAR
+TODO : Bouton re reboot
+TODO : Premier changement de prog revient sur le pgm 1, ok ensuite
+TODO : Retour vers IPAD des différents softs
+TESTS :
+	1 - Table, routeur, Digitakt, IPAD ON puis RaspBerry ON                     -> OK
+	2 - Table, routeur, Digitakt, IPAD OFF, RaspBerry ON puis tout le reste ON  -> OK
+
+
+
