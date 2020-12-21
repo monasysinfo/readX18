@@ -20,8 +20,8 @@ fi
 ##### LAUNCH PURE DATA
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 export PATH
-/home/pi/devop/readX18/startPD.sh 1>/home/pi/logs/startPD.log 2>&1 &
-nohup /usr/bin/python /home/pi/devop/readX18/readPBsendToPD.py -loglevel DEBUG >/home/pi/logs/readPBsendToPD.log 2>&1 &
+#/home/pi/devop/readX18/startPD.sh 1>/home/pi/logs/startPD.log 2>&1 &
+nohup /usr/bin/python /home/pi/devop/readX18/readPBsendToMIDI.py -config /home/pi/devop/readX18/config.ini -loglevel DEBUG >/home/pi/logs/readPBsendToMIDI.log 2>&1 &
 nohup /usr/bin/python /home/pi/devop/readX18/sendOSCToIpad.py -loglevel DEBUG>/home/pi/logs/sendOSCToIpad.log 2>&1 &
 nohup /usr/bin/python /home/pi/devop/readX18/readX18.py -loglevel DEBUG >/home/pi/logs/readX18.log 2>&1 &
 exit 0
