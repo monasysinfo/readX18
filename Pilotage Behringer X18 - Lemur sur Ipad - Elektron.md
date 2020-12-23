@@ -21,9 +21,9 @@ Lemur est une application Ipad qui permet de concevoir des interface utilisateur
 Ce module est développé en Python 3, il est nommé **sendOSCToIpad.py**.
 
 ##BlueTooth PedalBoard
-Ce module permet le lire des données emisent par un pédalier BlueTooth puis de les relayer vers la Elektron Digitakt via Pure Data.
+Ce module permet le lire des données emisent par un pédalier BlueTooth ou USB, puis de les relayer vers la Elektron Digitakt en midi.
 
-Ce module est développé en Python 3, il est nommé **readPBsendToPD.py**.
+Ce module est développé en Python 3, il est nommé **readPBsendToMIDI.py**.
 
 Ce module permet de calculer le TapTempo (produit par sur une touche dédiée sur le PB) et de relayer le tempo calculé à Pure Data qui le relay vers la Digitakt.
 Il permet de relayer les touches **START/STOP** **PGM NETX/PREV** **MUTE ALL** **UNMUTE ALL**
@@ -33,16 +33,6 @@ Il permet de relayer les touches **START/STOP** **PGM NETX/PREV** **MUTE ALL** *
 * MUTE ALL			Mute toutes les pistes (touche "0")
 * UNMUTE ALL		UnMute toutes les pistes. (touche "1")
 * TAP TEMPO 		Permet de modifier le tempo (touche "9")
-
-##Pure Data
-Ce module permet de piloter la BAR Elektron Digitakt.
-
-Les modules Pure Data se nomment:
-1. tap-tempo+start-stop+commande-subpatch.pd
-2. counter.pd 
-
-Ces modules permettent d'envoyer les commandes MIDI vers Elektron Digitakt.
-Il reçoivent eux même les commande du module **readPBsendToPD.py** au travers d'une connexion UDP.
 
 ##Elektron Digitakt
 C'est la BAR cible de cette architecture.

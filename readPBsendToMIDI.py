@@ -146,7 +146,8 @@ class PedalBoardReader(object):
                                     if not playing:
                                         playing = True                
                                         self.midioutport.send(mido.Message('start'))                    
-                                        play = StartStop(averagetime/24.0,sendClock, self.midioutport) # it auto-starts, no need of rt.start()
+                                        #play = StartStop(averagetime/24.0,sendClock, self.midioutport) # it auto-starts, no need of rt.start()
+                                        play = StartStop(averagetime/24.0, self.midioutport) # it auto-starts, no need of rt.start()
                                     else:
                                         playing = False
                                         play.stop() # better in a try/finally block to make sure the program ends!
@@ -184,26 +185,77 @@ class PedalBoardReader(object):
         bpm = (1.0 / (averagetime / 60.0))
         return (averagetime, bpm)
 
+
+class HeartBeat(object):
+    '''
+    Send HeartBeat to Lemur App
+    '''
+
+    def __init__(self, interval, msg_type, oscclient,sendfunction):
+        self._timer     = None
+        self.interval   = interval
+        self.oscclient   = oscclient    
+        self.sendfunction = sendfunction     
+        self.is_running = False        
+        self.msg_type   = msg_type
+
+        self.led = deque()
+        self.led.append(1)
+        self.led.append(0)
+        self.led.append(0)
+        self.led.append(0)
+
+        self.start()
+
+    def _sendLed(self):
+        for i in range(0,len(self.led)):    
+            self.sendfunction(msg='%s%s' % (self.msg_type,str(i)), value=self.led[i], oscclient=self.oscclient)
+        self.led.rotate(1)
+
+    def _run(self):        
+        self.is_running = False
+        self.start()
+        self._sendLed()
+
+    def start(self):
+        if not self.is_running:
+            self._timer = Timer(self.interval, self._run)
+            self._timer.start()
+            self.is_running = True
+
+    def stop(self):        
+        self._timer.cancel()
+        self.is_running = False
+
+
 class ReadMidiIn(object):
     '''
     Read current bank from Digitakt
     '''
     currentBank = (0,0)
 
-    def __init__(self, interval, msg_type, function, *args, **kwargs):
+    def __init__(self, interval, msg_type, inport):
         self._timer     = None
-        self.interval   = interval
-        self.function   = function
-        self.args       = args
-        self.kwargs     = kwargs
+        self.interval   = interval        
+        self.inport     = inport        
         self.is_running = False        
         self.msg_type   = msg_type
         self.start()
 
+    def _readBank(self):
+        midiMsg = False
+        while not midiMsg:
+            midiMsgData = self.inport.poll()
+            if midiMsgData is not None:
+                if midiMsgData.type == self.msg_type:
+                    self.currentBank = (midiMsgData.channel,midiMsgData.program)
+            else:
+                midiMsg = True
+
     def _run(self):        
         self.is_running = False
         self.start()
-        self.function(self, self.msg_type, *self.args, **self.kwargs)
+        self._readBank()
 
     def start(self):
         if not self.is_running:
@@ -218,17 +270,18 @@ class ReadMidiIn(object):
     def curbank(self):
         return self.currentBank
 
-class StartStop(object):
-    def __init__(self, interval, function, *args, **kwargs):
+class StartStop(object):    
+    def __init__(self, interval, outport):
         self._timer     = None
-        self.interval   = interval
-        self.function   = function
-        self.args       = args
-        self.kwargs     = kwargs
+        self.interval   = interval        
+        self.outport    = outport        
         self.is_running = False
         self.bar        = 0
         self.stopreq    = False
         self.start()
+
+    def _sendClock(self):    
+        self.outport.send(mido.Message('clock'))   
 
     def _run(self):
         self.bar += 1
@@ -242,8 +295,8 @@ class StartStop(object):
                 self.bar = 0
         
         self.is_running = False
-        self.start()
-        self.function(*self.args, **self.kwargs)
+        self.start()        
+        self._sendClock()
 
     def start(self):
         if not self.is_running:
@@ -258,22 +311,12 @@ class StartStop(object):
         #self._timer.cancel()
         #self.is_running = False
 
-def readBank(storeCurBank,msg_type,inport):
-    midiMsg = False
-    while not midiMsg:
-        midiMsgData = inport.poll()
-        if midiMsgData is not None:
-            if midiMsgData.type == msg_type:
-                storeCurBank.currentBank = (midiMsgData.channel,midiMsgData.program)
-        else:
-            midiMsg = True
-
-def sendClock(outport):    
-    outport.send(mido.Message('clock'))    
-
 def send_osc(msg=None, value=None, oscclient=None):
     if oscclient is not None:
-        oscclient.send_message(OSC_SEND_MSG[msg], value)
+        if msg in OSC_SEND_MSG:
+            oscclient.send_message(OSC_SEND_MSG[msg], value)
+        else:
+            oscclient.send_message(msg, value)
 
 def dicoverMidiDevice(mididev=None,wait=10,retry=10,oscclient=None):
     
@@ -345,6 +388,8 @@ def msg():
         -ipadport   Port OSC IPAD (defaut 8000)
         -loglevel   niveau de log [DEBUG,ERROR,WARNING,INFO]
         -config     Fichier de configuration (defaut config.ini)
+        -logfile	log file defaut /home/pi/logs/readPBsendToMIDI.log
+
         '''%sys.argv[0]
 
 def decodeArgs():
@@ -359,6 +404,8 @@ def decodeArgs():
     parser.add_argument('-ipadport', help="Port OSC IPAD (defaut 8000)",default=8000)
     parser.add_argument('-loglevel', help="niveau de log [DEBUG,ERROR,WARNING,INFO]",default='INFO')
     parser.add_argument('-config', help="config file",default='config.ini')
+    parser.add_argument('-logfile', help="log file",default='/home/pi/logs/readPBsendToMIDI.log')
+
     return parser.parse_args()
 
 def readConfigFile(configfile=None,keys=None):
@@ -396,12 +443,13 @@ def main():
     ipad_ip = arg_analyze.ipadadd
     ipad_osc_port = arg_analyze.ipadport    
     loglevel = arg_analyze.loglevel
+    logfile  = arg_analyze.logfile
 
     footboard = "Adafruit EZ-Key 6baa Keyboard"
     mididevice = "Elektron Digitakt"
     ctrl_keys = {82:"MUTE_ALL",79:"UNMUTE_ALL",76:"START_STOP",73:"TAP_TEMPO",83:"NEXT_PGM",86:"PREV_PGM"}
 
-    logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - readPBsendToMIDI : %(message)s', datefmt='%Y%m%d%I%M%S ')
+    logging.basicConfig(filename=logfile,filemode='a',level=loglevel, format='%(asctime)s - %(levelname)s - readPBsendToMIDI : %(message)s', datefmt='%Y%m%d%I%M%S ')
 
     configfile = arg_analyze.config
 
@@ -454,7 +502,7 @@ def main():
 
         if footdev is None:
             logging.error('Time out get pedalboard')
-            exit(-1)
+            exit -1
 
         logging.info('Got %s' % footdev)
 
@@ -462,15 +510,23 @@ def main():
         # Get Pedal board, now get midi device
         #######################################################################
 
-        midiin,midiout = dicoverMidiDevice(mididev=mididevice,wait=WAIT,oscclient=oscclient)
+        midiin,midiout = dicoverMidiDevice(mididev=mididevice,wait=WAIT,retry=retry,oscclient=oscclient)
+
+        if midiin is None and midiout is None:
+        	logging.erroe('No midi device available')
+        	exit -1
 
         midioutport   = mido.open_output(midiout)
         midiinputport = mido.open_input(midiin)
         ###########################################
         # Launch current bank reader
         ###########################################
-        getbank = ReadMidiIn(.5,'program_change',readBank, midiinputport) # Read midi In
+        getbank = ReadMidiIn(.5,'program_change', midiinputport) # Read midi In
 
+        ##########################################
+        # Launch HeartBeat
+        ##########################################
+        hb = HeartBeat(.3,"/readpb/led",oscclient,send_osc)
         ##########################################
         # Launch pedal board reader
         ##########################################
@@ -478,6 +534,7 @@ def main():
         rc = pbr.readPedalBoard()
         if rc == 99 :
             getbank.stop()
+            hb.stop()
             return
         elif rc == -2:
             logging.warning('Pedal Board not yet reachable, trying ...')
@@ -485,6 +542,7 @@ def main():
             time.sleep(WAIT)
         else:
             getbank.stop()
+            hb.stop()
             logging.error('Exit on error')
             return
 

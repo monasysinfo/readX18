@@ -8,6 +8,13 @@ Read all OSC datas from X18  mixer then send to Lemur App on Ipad
 21/12/2020
 lemonasterien@gmail.com
 
+20201223    :   Add multi Osc clients through a config file
+                If config file contains a [OSCApp] section then, all X18 messages are 
+                sent to the OSC address configured in this section:
+                [OSCApp]
+                App One = 192.168.0.5:8000
+                App Two = 192.168.0.6:9000
+
 '''
 
 import OSC
@@ -24,20 +31,66 @@ import argparse
 import sys
 import os
 import errno
+from collections import deque
+from threading import Timer
+import configparser
 
 SYNCHRO = '/tmp/readX18.synchro'
+OSC_SEND_MSG = []
+
+class HeartBeat(object):
+    '''
+    Send HeartBeat to Lemur App
+    '''
+
+    def __init__(self, interval, msg_type, oscclient,sendfunction):
+        self._timer     = None
+        self.interval   = interval
+        self.oscclient   = oscclient    
+        self.sendfunction = sendfunction     
+        self.is_running = False        
+        self.msg_type   = msg_type
+
+        self.led = deque()
+        self.led.append(1)
+        self.led.append(0)
+        self.led.append(0)
+        self.led.append(0)
+
+        self.start()
+
+    def _sendLed(self):
+        for i in range(0,len(self.led)):    
+            self.sendfunction(msg='%s%s' % (self.msg_type,str(i)), value=self.led[i], oscclient=self.oscclient)
+        self.led.rotate(1)
+
+    def _run(self):        
+        self.is_running = False
+        self.start()
+        self._sendLed()
+
+    def start(self):
+        if not self.is_running:
+            self._timer = Timer(self.interval, self._run)
+            self._timer.start()
+            self.is_running = True
+
+    def stop(self):        
+        self._timer.cancel()
+        self.is_running = False
 
 class BridgeX18toIpad(object):
     '''
     Relay all message from X18 to Lemur on IPAD
     '''
     status = None
-    def __init__(self, ipad_address=None, ipad_port=None, x18_address=None,x18_port=None):
-        super(BridgeX18toIpad, self).__init__()
-        self.ipad_address = ipad_address
-        self.ipad_port = ipad_port
+    def __init__(self, x18_address=None,x18_port=None,oscapplist=None):
+        super(BridgeX18toIpad, self).__init__()        
         self.x18_address = x18_address
         self.x18_port = x18_port
+        self.hb = None
+        self.oscapplist = oscapplist
+        self.oscapp_client = []
 
         if self.connectX18():
             if not self.connectIPAD():
@@ -54,9 +107,21 @@ class BridgeX18toIpad(object):
         '''
     
         try:
-            self.ipad_client = SimpleUDPClient(self.ipad_address, self.ipad_port)
-            logging.info("connect IPAD OK")
-            self.ipad_client.send_message("/Connexion/value", 'Connnect Ipad OK')
+            if self.oscapplist is not None: ## Create list of ipad client link
+                for ipad in self.oscapplist:
+                    self.oscapp_client.append(SimpleUDPClient(self.oscapplist[ipad][0],self.oscapplist[ipad][1]))
+                    logging.info("Connect IPAD %s OK" % ipad)
+                
+            else:
+                self.oscapp_client.append(SimpleUDPClient(self.ipad_address, self.ipad_port))
+
+                #self.oscapp_client = SimpleUDPClient(self.ipad_address, self.ipad_port)
+                logging.info("Connect IPAD OK")
+
+            send_osc("/Connexion/value",'Connnect Ipad OK',self.oscapp_client[0])
+
+            ## HeartBeat send to first Ipad only
+            self.hb = HeartBeat(.3,"/readx18/led",self.oscapp_client[0],send_osc)
             return True
             
         except:
@@ -111,7 +176,12 @@ class BridgeX18toIpad(object):
     def relay_msg_to_Ipad(self,addr, tags, data, client_address):        
         
         logging.debug('%s : %s' % (addr.decode('utf8'),data))
-        self.ipad_client.send_message(addr.decode('utf8'), data)
+
+        #send_osc(addr.decode('utf8'),data,self.oscapp_client)
+
+        for app in self.oscapp_client:
+            send_osc(addr.decode('utf8'),data,app)
+
         
     def get_all_x18_change_messages(self):       
        
@@ -129,15 +199,33 @@ class BridgeX18toIpad(object):
             thread.active = False
             logging.info("Waiting for complete shutdown..")        
             thread.join()
+            self.hb.stop()
             return
 
-def listenX18(ipad_address=None, ipad_port=None, x18_address=None, x18_port=None):
-    bx18 = BridgeX18toIpad(ipad_address=ipad_address, ipad_port=ipad_port, x18_address=x18_address, x18_port=x18_port)
+def send_osc(msg=None, value=None, oscclient=None):
+    if oscclient is not None:
+        if msg in OSC_SEND_MSG:
+            oscclient.send_message(OSC_SEND_MSG[msg], value)
+        else:
+            oscclient.send_message(msg, value)            
+
+def listenX18(x18_address=None, x18_port=None,oscapplist=None):
+    bx18 = BridgeX18toIpad(x18_address=x18_address, x18_port=x18_port,oscapplist=oscapplist)
     if bx18.status is None:
         bx18.get_all_x18_change_messages()
     else:
         logging.error(bx18.status)
     
+def readConfigFile(configfile=None,key=None):    
+    oscapplist = {}
+    config = configparser.ConfigParser()
+    config.read(configfile)
+    if key in config.sections():
+        for app in config[key]:            
+            oscapplist[app] = [config[key][app].split(':')[0] , int(config[key][app].split(':')[1])]
+        return oscapplist
+    else:
+        return None
 
 def decodeArgs():
     '''
@@ -151,6 +239,8 @@ def decodeArgs():
     parser.add_argument('-ipadadd', help="Adresse IP Ipad (defaut 192.168.0.5)",default='192.168.0.5')
     parser.add_argument('-ipadport', help="Port OSC IPAD (defaut 8000)",default=8000)
     parser.add_argument('-loglevel', help="niveau de log [DEBUG,ERROR,WARNING,INFO]",default='INFO')
+    parser.add_argument('-logfile', help="log file",default='/home/pi/logs/readX18.log')
+    parser.add_argument('-config', help="config file",default='config.ini')
     return parser.parse_args()
 
 def msg():
@@ -161,6 +251,8 @@ def msg():
         -ipadadd    :   Adresse IP Ipad (defaut 192.168.0.5)
         -ipadport   :   Port OSC IPAD (defaut 8000)
         -loglevel   :   niveau de log [DEBUG,ERROR,WARNING,INFO] default=INFO
+        -config     :   Fichier de configuration (defaut config.ini)
+        -logfile    :   log file defaut /home/pi/logs/readX18.log
         '''%sys.argv[0]
 
 if __name__ == '__main__':
@@ -172,8 +264,22 @@ if __name__ == '__main__':
     x18_address = arg_analyze.x18add
     x18_port = arg_analyze.x18port
     loglevel = arg_analyze.loglevel
+    logfile  = arg_analyze.logfile
+    configfile = arg_analyze.config
 
-    logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - readX18 : %(message)s', datefmt='%Y%m%d%I%M%S ')
+    logging.basicConfig(filename=logfile,filemode='a',level=loglevel, format='%(asctime)s - %(levelname)s - readX18 : %(message)s', datefmt='%Y%m%d%I%M%S ')
+
+    if os.path.isfile(configfile):
+        logging.info('Read config from %s' % configfile)
+        oscapplist =  readConfigFile(configfile,'OSCApp')
+    else:
+        oscapplist = {'default':[ipad_address,ipad_port]}
+
+    if oscapplist is None:
+        logging.error('No Ipads configured in %s' % configfile)
+        exit -1
+    else:
+        logging.info('%s' % oscapplist)
 
     try:
         os.mkfifo(SYNCHRO)
@@ -191,7 +297,7 @@ if __name__ == '__main__':
     logging.info('Syncho OK, start X18 listener') 
 
 
-    listenX18(ipad_address=ipad_address, ipad_port=ipad_port, x18_address=x18_address, x18_port=x18_port)
+    listenX18(x18_address=x18_address, x18_port=x18_port,oscapplist=oscapplist)
     
 
     

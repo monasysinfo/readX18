@@ -20,36 +20,57 @@ import traceback
 import time
 import os
 import errno
+from collections import deque
+from threading import Timer
 
 SYNCHRO = '/tmp/readX18.synchro'
 
 NBTRY = 0
 TRIED = 200 # 200 * 10 seconds before stop program if LAN is not up
-SLEEP = 10
+OSC_SEND_MSG = []
+WAIT = 3
+RETRY = 2400 ## Deux heures
 
-def decodeArgs():
+class HeartBeat(object):
     '''
-    Decodage des arguments
+    Send HeartBeat to Lemur App
     '''
 
-    parser = argparse.ArgumentParser(description='read X18, send to Ipad', usage=msg())
-    #parser.add_argument('-h', '--help', help='help',const='HELP',nargs='?')
-    parser.add_argument('-x18add', help="Adresse IP X18 (defaut 192.168.0.3)", default="192.168.0.3")
-    parser.add_argument('-x18port', help="Port OSC X18 (defaut 10024)",default=10024)
-    parser.add_argument('-srvadd', help="Adresse IP Serveur OSC (defaut 192.168.0.9)",default='192.168.0.9')
-    parser.add_argument('-srvport', help="Port Serveur OSC (defaut 8000)",default=8000)
-    parser.add_argument('-loglevel', help="niveau de log [DEBUG,ERROR,WARNING,INFO]",default='INFO')
-    return parser.parse_args()
+    def __init__(self, interval, msg_type, oscclient,sendfunction):
+        self._timer     = None
+        self.interval   = interval
+        self.oscclient   = oscclient    
+        self.sendfunction = sendfunction     
+        self.is_running = False        
+        self.msg_type   = msg_type
 
-def msg():
-    return '''%s
-        -h, help
-        -x18add     :   Adresse IP X18 (defaut 192.168.0.3)
-        -x18port    :   Port OSC X18 (defaut 10024)
-        -srvdadd    :   Adresse IP Serveur OSC (defaut 192.168.0.9)
-        -srvport   :    Port Serveur OSC (defaut 8000)
-        -loglevel   :   niveau de log [DEBUG,ERROR,WARNING,INFO] default=INFO
-        '''%sys.argv[0]
+        self.led = deque()
+        self.led.append(1)
+        self.led.append(0)
+        self.led.append(0)
+        self.led.append(0)
+
+        self.start()
+
+    def _sendLed(self):
+        for i in range(0,len(self.led)):    
+            self.sendfunction(msg='%s%s' % (self.msg_type,str(i)), value=self.led[i], oscclient=self.oscclient)
+        self.led.rotate(1)
+
+    def _run(self):        
+        self.is_running = False
+        self.start()
+        self._sendLed()
+
+    def start(self):
+        if not self.is_running:
+            self._timer = Timer(self.interval, self._run)
+            self._timer.start()
+            self.is_running = True
+
+    def stop(self):        
+        self._timer.cancel()
+        self.is_running = False
 
 class X18ToIpadRelay():
     status = None
@@ -74,7 +95,7 @@ class X18ToIpadRelay():
         '''
         global TRIED
         global SYNCHRO
-        global SLEEP
+        global WAIT
 
         E = None
         while TRIED > 0:
@@ -88,7 +109,7 @@ class X18ToIpadRelay():
                 E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
                 logging.info('Re-try opening Ipad listener ... %s' % TRIED)                    
                 TRIED -= 1
-                time.sleep(SLEEP)
+                time.sleep(WAIT)
 
         if TRIED <= 0:
             logging.error("Cannot open Ipad listener %s" % E)
@@ -117,7 +138,7 @@ class X18ToIpadRelay():
         '''
         #TODO: Envoyer un message pour valider la connexion , le simple client UDP ne suffit pas
         global TRIED        
-        global SLEEP
+        global WAIT
         global NBTRY
 
         E = None
@@ -132,7 +153,7 @@ class X18ToIpadRelay():
                 E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
                 TRIED -= 1
                 NBTRY += 1
-                time.sleep(SLEEP)
+                time.sleep(WAIT)
 
         if TRIED <= 0:
             logging.error("cannot connect to X18 %s" % E)
@@ -162,11 +183,47 @@ class X18ToIpadRelay():
         logging.debug('ch_handler send to X18 %s : %s' % (value,address))
         self.oscclientx18.send_message(address, value)
 
+def send_osc(msg=None, value=None, oscclient=None):
+    if oscclient is not None:
+        if msg in OSC_SEND_MSG:
+            oscclient.send_message(OSC_SEND_MSG[msg], value)
+        else:
+            oscclient.send_message(msg, value)            
+
+def decodeArgs():
+    '''
+    Decodage des arguments
+    '''
+
+    parser = argparse.ArgumentParser(description='read X18, send to Ipad', usage=msg())
+    #parser.add_argument('-h', '--help', help='help',const='HELP',nargs='?')
+    parser.add_argument('-x18add', help="Adresse IP X18 (defaut 192.168.0.3)", default="192.168.0.3")
+    parser.add_argument('-x18port', help="Port OSC X18 (defaut 10024)",default=10024)
+    parser.add_argument('-srvadd', help="Adresse IP Serveur OSC (defaut 192.168.0.9)",default='192.168.0.9')
+    parser.add_argument('-srvport', help="Port Serveur OSC (defaut 8000)",default=8000)
+    parser.add_argument('-loglevel', help="niveau de log [DEBUG,ERROR,WARNING,INFO]",default='INFO')
+    parser.add_argument('-ipadadd', help="Adresse IP Ipad (defaut 192.168.0.5)",default='192.168.0.5')
+    parser.add_argument('-ipadport', help="Port OSC IPAD (defaut 8000)",default=8000)
+    parser.add_argument('-logfile', help="log file",default='/home/pi/logs/sendOSCToIpad.log')
+    return parser.parse_args()
+
+def msg():
+    return '''%s
+        -h, help
+        -x18add     :   Adresse IP X18 (defaut 192.168.0.3)
+        -x18port    :   Port OSC X18 (defaut 10024)
+        -srvdadd    :   Adresse IP Serveur OSC (defaut 192.168.0.9)
+        -srvport   :    Port Serveur OSC (defaut 8000)
+        -loglevel   :   niveau de log [DEBUG,ERROR,WARNING,INFO] default=INFO
+        -ipadadd    :   Adresse IP Ipad defaut 192.168.0.5
+        -ipadport   :   Port OSC IPAD defaut 8000)
+        -logfile    :   log file defaut /home/pi/logs/sendOSCToIpad.log
+        '''%sys.argv[0]
+
 def startServer(srv_address=None, srv_port=None, x18_address=None, x18_port=None):
     relay = X18ToIpadRelay(srv_address=srv_address, srv_port=srv_port, x18_address=x18_address, x18_port=x18_port) 
     if relay.status is not None:
         logging.error(relay.status)
-
 
 if __name__ == '__main__':
     
@@ -175,9 +232,14 @@ if __name__ == '__main__':
     srv_port = arg_analyze.srvport
     x18_address = arg_analyze.x18add
     x18_port = arg_analyze.x18port
+    ipad_address = arg_analyze.ipadadd
+    ipad_port = arg_analyze.ipadport
+
     loglevel = arg_analyze.loglevel
+    logfile  = arg_analyze.logfile
+
     
-    logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - readX18 : %(message)s', datefmt='%Y%m%d%I%M%S ')
+    logging.basicConfig(filename=logfile,filemode='a',level=loglevel, format='%(asctime)s - %(levelname)s - sendOSCToIpad : %(message)s', datefmt='%Y%m%d%I%M%S ')
 
     ## Create Named Pipe, if not exists, for synchronisation with readX18.py
     try:
@@ -186,5 +248,34 @@ if __name__ == '__main__':
         if oe.errno != errno.EEXIST:
             raise
 
+    #############################################
+    # Open OSC UDP Port to lemur on Ipad
+    ############################################    
+    oscclient = None
+    try:
+        oscclient = SimpleUDPClient(ipad_address, ipad_port)
+    except:
+        E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
+        logging.error(E)
+
+    retry = RETRY
+    E = None
+    while retry > 0:
+        try:
+            oscclient.send_message('/Connexion/value', 'Connected')
+            break
+        except:
+            E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
+            retry -= 1
+            time.sleep(WAIT)
+
+    if retry <= 0:
+        logging.error("cannot connect to IPAD %s" % E)
+        exit(-1)
+    else:
+        logging.info('Connected to IPAD')
+
+    hb = HeartBeat(.3,"/osclemur/led",oscclient,send_osc)
     startServer(srv_address=srv_address, srv_port=srv_port, x18_address=x18_address, x18_port=x18_port)
+    hb.stop()
     
