@@ -47,7 +47,7 @@ Les fichiers journaux sont écrits dans le répertoire $HOME/logs (créez le ré
 Installez toutes les bibliothèques python:
 
 ```shell
-pip install -r ~ / devop / readX18 / requirements.txt
+pip install -r ~/devop/readX18/requirements.txt
 ```
 
 La configuration personnalisée peut être effectuée en éditant le fichier **\*.service** et le fichier **config.ini**.
