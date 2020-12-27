@@ -238,8 +238,11 @@ if __name__ == '__main__':
     loglevel = arg_analyze.loglevel
     logfile  = arg_analyze.logfile
 
-    
-    logging.basicConfig(filename=logfile,filemode='a',level=loglevel, format='%(asctime)s - %(levelname)s - sendOSCToIpad : %(message)s', datefmt='%Y%m%d%I%M%S ')
+    if logfile == 'None' :
+        logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - sendOSCToIpad : %(message)s', datefmt='%Y%m%d%I%M%S ')
+    else:
+        logging.basicConfig(filename=logfile,filemode='w',level=loglevel, format='%(asctime)s - %(levelname)s - sendOSCToIpad : %(message)s', datefmt='%Y%m%d%I%M%S ')
+
 
     ## Create Named Pipe, if not exists, for synchronisation with readX18.py
     try:

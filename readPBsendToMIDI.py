@@ -9,13 +9,16 @@ Elektron Digitakt connected with USB on the raspBerry.
 21/12/2020
 lemonasterien@gmail.com
 
-'''
+
 
 ######################################################################
-# 20201220 :    Read pedalBoard (USB/Bluetooth) and send keys to Midi Device
-#               Some values are send back to Lemur on Ipad.
-#
+20201220 :  Read pedalBoard (USB/Bluetooth) and send keys to Midi Device
+            Some values are send back to Lemur on Ipad.
+
+20201224 :  Add the multi reader pedal board.
+
 ######################################################################
+'''
 import socket
 import evdev
 import time
@@ -33,6 +36,7 @@ import argparse
 import configparser
 import os
 from threading import Timer
+import threading
 import mido
 
 OSC_SEND_MSG = {'CONNECT':'/Connexion/value','TEMPO':'/Tempo/value'}
@@ -46,8 +50,12 @@ class PedalBoardReader(object):
     '''
     Used to read the pedal board end send midi to the midi device
     '''
-    defTempo = .5  # Default tempo of 120 BPM
-    mintime  = 1.0   # 1 sec. is the min time betwwen 2 tap on a key (to avoid error)
+    defTempo = .5       # Default tempo of 120 BPM
+    mintime  = 1.0      # 1 sec. is the min time betwwen 2 tap on a key (to avoid error)
+    playing = False     # Current state
+    otherReaders = None # List of all readers to transmit current state (playing/stop)
+    stopNow  = False    # If True, stop the reader
+    play     = None     # link to the StartStop object
 
     def __init__(self,dev=None,oscclient=None,midioutport=None,getbank=None,ctrl_keys=None):
         self.dev = dev        
@@ -58,6 +66,9 @@ class PedalBoardReader(object):
 
         self.lastkey = None
         self.lktimstamp = 0  # Timestamp of the last key
+        self.averagetime = self.defTempo
+        self.bpm = None
+
 
     def _avoidMultipleTap(self,key):
         '''
@@ -85,20 +96,22 @@ class PedalBoardReader(object):
     def readPedalBoard(self):
         '''
         Read key pressed from the pedal board
-        '''
+        '''        
         logging.info('Reading Pedal Board')
         tap = deque()
         elapse = None
         prevelapse = None
-        mean = None    
-        averagetime = self.defTempo
-        puradata = False
-        playing = False
+        mean = None        
+        puradata = False        
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         try:
             for event in self.dev.read_loop():
+                if self.stopNow :
+                    logging.info('Stop request receive')
+                    exit(-3)
+
                 if event.type == evdev.ecodes.EV_KEY:
                     logging.debug('Get : %s' % evdev.categorize(event))                        
                     if event.value == 1:                        
@@ -121,11 +134,16 @@ class PedalBoardReader(object):
                                             tap.append(ms)
 
                                     if len(tap) >= 3:
-                                        averagetime, bpm = self.averagetimes(tap)
-                                        clockvalue = '%.4d' % int(averagetime*1000)
-                                        logging.debug('Clock Value :%s, BPM : %s' % (clockvalue,int(bpm)))
+                                        self.averagetime, self.bpm = self.averagetimes(tap)
+                                        # send current tempo to other readers instances
+                                        for other in self.otherReaders:
+                                            other.averagetime = self.averagetime
+                                            other.bpm = self.bpm
+
+                                        clockvalue = '%.4d' % int(self.averagetime*1000)
+                                        logging.debug('Clock Value :%s, BPM : %s' % (clockvalue,int(self.bpm)))
                                         try:
-                                            send_osc(msg="TEMPO", value=int(bpm) , oscclient=self.oscclient)
+                                            send_osc(msg="TEMPO", value=int(self.bpm) , oscclient=self.oscclient)
                                         except:
                                             E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
                                             logging.error(E)
@@ -143,14 +161,18 @@ class PedalBoardReader(object):
                                     if not self._avoidMultipleTap(self.dev.active_keys()[0]):
                                         continue
 
-                                    if not playing:
-                                        playing = True                
-                                        self.midioutport.send(mido.Message('start'))                    
-                                        #play = StartStop(averagetime/24.0,sendClock, self.midioutport) # it auto-starts, no need of rt.start()
-                                        play = StartStop(averagetime/24.0, self.midioutport) # it auto-starts, no need of rt.start()
+                                    if not self.playing:                                        
+                                        self.midioutport.send(mido.Message('start'))                                        
+                                        self.play = StartStop(self.averagetime/24.0, self.midioutport) # it auto-starts, no need of rt.start()
+                                        # send current state to other readers instances
+                                        for other in self.otherReaders:
+                                            other.playing = True
+                                            other.play = self.play
                                     else:
-                                        playing = False
-                                        play.stop() # better in a try/finally block to make sure the program ends!
+                                        for other in self.otherReaders:
+                                            other.playing = False
+                                        
+                                        self.play.stop() # better in a try/finally block to make sure the program ends!
                                         self.midioutport.send(mido.Message('stop'))
 
                                 ##############################################################
@@ -166,7 +188,7 @@ class PedalBoardReader(object):
 
 
         except (KeyboardInterrupt, SystemExit):            
-                logging.info("Shutdown from readPedalBoard ...")             
+                logging.info("2 - Shutdown from readPedalBoard ...")             
                 return 99
         except (OSError) as err:
             logging.error(err)
@@ -356,7 +378,7 @@ def dicoverMidiDevice(mididev=None,wait=10,retry=10,oscclient=None):
 def discoverPedalBoard(footboard=None,wait=10,retry=10,oscclient=None):
     
     send_osc(msg="CONNECT", value="Discover BT", oscclient=oscclient)
-    logging.info('Discovering BT devices ...')
+    logging.info('Searching Pedal Board %s ...' % footboard)
     footdev = None
     dev = None
     tried = 0
@@ -365,7 +387,7 @@ def discoverPedalBoard(footboard=None,wait=10,retry=10,oscclient=None):
         devices = evdev.list_devices()
         for d in devices:
             dev = evdev.InputDevice(d)
-            if dev.name == footboard:
+            if dev.name.strip() == footboard.strip():
                 logging.info('Device found : %s' % footboard)
                 send_osc(msg="CONNECT", value="Found %s" % footboard , oscclient=oscclient)                
                 footdev = d
@@ -408,32 +430,45 @@ def decodeArgs():
 
     return parser.parse_args()
 
-def readConfigFile(configfile=None,keys=None):
-    fb = None
-    midi = None    
-
+def readConfigFile(configfile=None):
+    fb = []
+    midi = None
+    keyconfig = {}
+    
     if os.path.isfile(configfile):
         config = configparser.ConfigParser()
         config.read(configfile)
         if 'PedalBoard' in config.sections():
-            if 'bluetooth' in config['PedalBoard']:
-                fb = config['PedalBoard']['bluetooth']
-            elif 'usb' in config['PedalBoard']:
-                fb = config['PedalBoard']['usb']
+            if 'pbs' in config['PedalBoard']:
+                fb = fb + config['PedalBoard']['pbs'].split(',')
+                #fb.append(config['PedalBoard']['pbs'])
+            
 
         if 'Midi' in config.sections():
             if 'digitakt' in config['Midi']:
                 midi = config['Midi']['digitakt']
 
-        if 'Buttons' in config.sections():
-            if 'START_STOP' in config['Buttons']:
-                keys['START_STOP'] = config['Buttons']['START_STOP']
-            if 'TAP_TEMPO' in config['Buttons']:
-                keys['TAP_TEMPO'] = config['Buttons']['TAP_TEMPO']
-            if 'NEXT_PGM' in config['Buttons']:
-                keys['NEXT_PGM'] = config['Buttons']['NEXT_PGM']
+        for b in fb:
+            keys = {}
+            if b in config.sections():
+                if 'START_STOP' in config[b]:
+                    keys[int(config[b]['START_STOP'])] = 'START_STOP'
+                if 'TAP_TEMPO' in config[b]:
+                    keys[int(config[b]['TAP_TEMPO'])] = 'TAP_TEMPO'
+                if 'NEXT_PGM' in config[b]:
+                    keys[int(config[b]['NEXT_PGM'])] = 'NEXT_PGM'
+                keyconfig[b] = keys
 
-        return(True,fb,midi,keys)
+            elif 'Buttons' in config.sections():
+                if 'START_STOP' in config['Buttons']:
+                    keys[int(config['Buttons']['START_STOP'])] = 'START_STOP'
+                if 'TAP_TEMPO' in config['Buttons']:
+                    keys[int(config['Buttons']['TAP_TEMPO'])] = 'TAP_TEMPO'
+                if 'NEXT_PGM' in config['Buttons']:
+                    keys[int(config['Buttons']['NEXT_PGM'])] = 'NEXT_PGM'
+                keyconfig[b] = keys
+
+        return(True,fb,midi,keyconfig)
     else:
         return(False,None,None,None)
 
@@ -445,19 +480,22 @@ def main():
     loglevel = arg_analyze.loglevel
     logfile  = arg_analyze.logfile
 
-    footboard = "Adafruit EZ-Key 6baa Keyboard"
-    mididevice = "Elektron Digitakt"
-    ctrl_keys = {82:"MUTE_ALL",79:"UNMUTE_ALL",76:"START_STOP",73:"TAP_TEMPO",83:"NEXT_PGM",86:"PREV_PGM"}
+    footboards = None
+    mididevice = None
+    #ctrl_keys = {82:"MUTE_ALL",79:"UNMUTE_ALL",76:"START_STOP",73:"TAP_TEMPO",83:"NEXT_PGM",86:"PREV_PGM"}
 
-    logging.basicConfig(filename=logfile,filemode='a',level=loglevel, format='%(asctime)s - %(levelname)s - readPBsendToMIDI : %(message)s', datefmt='%Y%m%d%I%M%S ')
+    if logfile == 'None' :
+        logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - readPBsendToMIDI : %(message)s', datefmt='%Y%m%d%I%M%S ')
+    else:
+        logging.basicConfig(filename=logfile,filemode='w',level=loglevel, format='%(asctime)s - %(levelname)s - readPBsendToMIDI : %(message)s', datefmt='%Y%m%d%I%M%S ')
 
     configfile = arg_analyze.config
 
-    rc,fb,midi,ctrlkeys =  readConfigFile(configfile,ctrl_keys)
-    if rc:
-        footboard = fb
-        mididevice = midi
-        ctrl_keys = ctrlkeys
+    rc,footboards,mididevice,keyconfig =  readConfigFile(configfile)
+
+    if not rc:
+        logging.error('No suitable config found in %s' % configfile)
+        exit(-1)
 
     
     #############################################
@@ -470,6 +508,9 @@ def main():
         E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
         logging.error(E)
 
+    ######################################################
+    # Attempt to send OSC to OSC App to validate connexion
+    ######################################################
     retry = RETRY
     E = None
     while retry > 0:
@@ -488,66 +529,110 @@ def main():
         logging.info('Connected to IPAD')
         
     #####################################################################
-    # Pedal Board Connexion
+    # Pedals Boards Connexion
     #####################################################################
-    retry = RETRY
-    while retry > 0:
-        try:
-            ## Try to connect pedal board
-            logging.info('Trying connect %s ...' % footboard)
-            footdev,dev = discoverPedalBoard(footboard=footboard,wait=WAIT,oscclient=oscclient)
-        except (KeyboardInterrupt, SystemExit):            
-            logging.info("Shutdown ...")             
-            return
+    allpb = {}
+    for pb in footboards:
+        retry = RETRY
+        while retry > 0:
+            try:
+                ## Try to connect pedal board
+                logging.info('Trying connect %s ...' % pb)
+                footdev,dev = discoverPedalBoard(footboard=pb,wait=WAIT,oscclient=oscclient)
+                allpb[pb] = dev
 
-        if footdev is None:
-            logging.error('Time out get pedalboard')
-            exit -1
+            except (KeyboardInterrupt, SystemExit):            
+                logging.info("3 - Shutdown ...")             
+                return
 
-        logging.info('Got %s' % footdev)
+            if footdev is None:
+                logging.error('Time out get pedalboard')
+                exit( -1)
 
-        #######################################################################
-        # Get Pedal board, now get midi device
-        #######################################################################
+            logging.info('Got %s' % footdev)
+            break
 
-        midiin,midiout = dicoverMidiDevice(mididev=mididevice,wait=WAIT,retry=retry,oscclient=oscclient)
+    #######################################################################
+    # Get Pedal board, now get midi device
+    #######################################################################
 
-        if midiin is None and midiout is None:
-        	logging.erroe('No midi device available')
-        	exit -1
+    midiin,midiout = dicoverMidiDevice(mididev=mididevice,wait=WAIT,retry=retry,oscclient=oscclient)
 
-        midioutport   = mido.open_output(midiout)
-        midiinputport = mido.open_input(midiin)
-        ###########################################
-        # Launch current bank reader
-        ###########################################
-        getbank = ReadMidiIn(.5,'program_change', midiinputport) # Read midi In
+    if midiin is None and midiout is None:
+    	logging.erroe('No midi device available')
+    	exit( -1)
 
-        ##########################################
-        # Launch HeartBeat
-        ##########################################
-        hb = HeartBeat(.3,"/readpb/led",oscclient,send_osc)
-        ##########################################
-        # Launch pedal board reader
-        ##########################################
-        pbr = PedalBoardReader(dev=dev,oscclient=oscclient,midioutport=midioutport,getbank=getbank,ctrl_keys=ctrl_keys)
-        rc = pbr.readPedalBoard()
-        if rc == 99 :
-            getbank.stop()
-            hb.stop()
-            return
-        elif rc == -2:
-            logging.warning('Pedal Board not yet reachable, trying ...')
-            retry -=1
-            time.sleep(WAIT)
-        else:
-            getbank.stop()
-            hb.stop()
-            logging.error('Exit on error')
-            return
+    midioutport   = mido.open_output(midiout)
+    midiinputport = mido.open_input(midiin)
+    ###########################################
+    # Launch current bank reader
+    ###########################################
+    getbank = ReadMidiIn(.5,'program_change', midiinputport) # Read midi In
 
-    logging.error('Abort Pedal Board not readable')
-    exit(0)
+    ##########################################
+    # Launch HeartBeat
+    ##########################################
+    hb = HeartBeat(.3,"/readpb/led",oscclient,send_osc)
+
+    ##########################################
+    # Launch pedal board reader
+    ##########################################
+    readers = []
+    for pb in allpb:
+        logging.debug('KEYS %s' % keyconfig[pb] )
+        readers.append(PedalBoardReader(dev=allpb[pb],oscclient=oscclient,midioutport=midioutport,getbank=getbank,ctrl_keys=keyconfig[pb]))
+
+    readthreads = []
+
+    for reader in readers:
+        reader.otherReaders = readers
+
+        readthreads.append(threading.Thread(target=reader.readPedalBoard))
+    
+    for readthread in readthreads:   
+        readthread.start()
+
+
+    try:
+        while True:        
+            time.sleep(1)
+
+    except (KeyboardInterrupt, SystemExit):
+        for reader in readers:
+            reader.stopNow = True        
+        
+        logging.info("1 - Tap a key to shutdown ...")
+
+        nbt = len(readthreads)
+        while True:
+            for readthread in readthreads:                
+                if readthread.is_alive():                    
+                    time.sleep(1)
+                else:
+                    nbt -= 1
+                    if nbt == 0:
+                        break
+            break
+        getbank.stop()
+        hb.stop()
+        return
+
+    # if rc == 99 :
+    #     getbank.stop()
+    #     hb.stop()
+    #     return
+    # elif rc == -2:
+    #     logging.warning('Pedal Board not yet reachable, trying ...')
+    #     retry -=1
+    #     time.sleep(WAIT)
+    # else:
+    #     getbank.stop()
+    #     hb.stop()
+    #     logging.error('Exit on error')
+    #     return
+# 
+    # logging.error('Abort Pedal Board not readable')
+    # exit(0)
 
 
 if __name__ == '__main__': 

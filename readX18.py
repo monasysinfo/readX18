@@ -267,7 +267,12 @@ if __name__ == '__main__':
     logfile  = arg_analyze.logfile
     configfile = arg_analyze.config
 
-    logging.basicConfig(filename=logfile,filemode='a',level=loglevel, format='%(asctime)s - %(levelname)s - readX18 : %(message)s', datefmt='%Y%m%d%I%M%S ')
+    
+    if logfile == 'None' :
+        logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - readX18 : %(message)s', datefmt='%Y%m%d%I%M%S ')
+    else:
+        logging.basicConfig(filename=logfile,filemode='w',level=loglevel, format='%(asctime)s - %(levelname)s - readX18 : %(message)s', datefmt='%Y%m%d%I%M%S ')
+
 
     if os.path.isfile(configfile):
         logging.info('Read config from %s' % configfile)
