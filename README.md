@@ -48,5 +48,52 @@ Les modules **Lemur/Touch OSC** et **Pilotage Behringer X18** sont dépendants:
 TODO: Schéma
 
 
+# RaspBerry tools for controling pedal Board, Behringer X18 mix table, Lemur / Touch OSC app (on Ipad / Android)
+## Jean-Yves Priou lemonasterien@gmail.com
+## 12/17/2020
 
+
+## Behringer X18 control
+This module allows you to read data from the Behringer X18 mixer
+1. All changes made to the table (volume, Eq ... to are transmitted to this module via an OSC connection.
+2. All changes received from the X18 are relayed to the Lemur / Touch OSC type applications configured in the config.ini file.
+
+Data recovery from the X18 is done via a * subscription * triggered via the OSC ** / xremote ** path
+
+This module is developed in Python 3, it is named ** readX18.py **.
+It uses the OSC.py class developed by * Daniel Holth & Clinton McChesney * (https://github.com/tjoracoder/python-x32)
+This class has been adapted for Python 3
+
+## Lemur / Touch OSC (IPad / Android)
+These applications allow to read / send OSC commands to a host defined in the application.
+
+The python3 ** sendOSCToIpad.py ** program is used to read OSC commands by these applications and then relay them to the X18.
+
+## Play Pedal Board
+This module allows the reading of data emitted by one or more pedals (BlueTooth, USB) then transforming the information
+reviews in MIDI messages which will be relayed to a (single) midi device (Drum machine, SYnthé ...)
+
+The use case is to be able to control an Elektron Digitak from several remote controls.
+
+This module is developed in Python 3, it is named ** readPBsendToMIDI.py **.
+
+This module is used to calculate the TapTempo (produced by a dedicated key on the PB) and to relay the calculated tempo to a clock that will be sent to the
+target midi device.
+
+It is used to relay the ** START / STOP ** ** PGM NETX ** keys
+
+* START / STOP Start Stop of a sequence.
+* PGM NETX Goes to the next program
+* TAP TEMPO Allows you to control the clock tempo
+
+## Elektron Digitakt
+This is the target BAR of this architecture.
+
+## Start-up
+All these modules are launched in daemon mode when starting the RaspBerry var /etc/rc.local.
+The ** Lemur / Touch OSC ** and ** Behringer X18 Control ** modules are dependent:
+** Behringer X18 control ** does not start until after ** Lemur / Touch OSC ** has started up and connected to the network.
+
+## Architecture
+TODO: Diagram
 
