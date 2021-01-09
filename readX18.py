@@ -79,44 +79,42 @@ class HeartBeat(object):
         self._timer.cancel()
         self.is_running = False
 
-class BridgeX18toIpad(object):
+class BridgeX18toOSC(object):
     '''
-    Relay all message from X18 to Lemur on IPAD
+    Relay all message from X18 to OSC client App (like Lemur on IPAD)
     '''
     status = None
-    def __init__(self, x18_address=None,x18_port=None,oscapplist=None):
-        super(BridgeX18toIpad, self).__init__()        
+    def __init__(self, x18_address=None,x18_port=None,oscapplist=None,refreshOSC=None):
+        super(BridgeX18toOSC, self).__init__()
         self.x18_address = x18_address
         self.x18_port = x18_port
         self.hb = None
         self.oscapplist = oscapplist
         self.oscapp_client = []
+        self.refreshOSC = refreshOSC
 
         if self.connectX18():
-            if not self.connectIPAD():
-                self.status = 'ERROR connectIPAD'
+            if not self.connectOSCClient():
+                self.status = 'ERROR connectOSCClient'
         else:
             self.status = 'ERROR connectX18'
 
 
 
-    def connectIPAD(self):
+    def connectOSCClient(self):
         '''
-        Connect to IPAD
-        TODO: Test if self.ipad_address is a valid  host
+        Connect to OSC client
         '''
     
         try:
             if self.oscapplist is not None: ## Create list of ipad client link
-                for ipad in self.oscapplist:
-                    self.oscapp_client.append(SimpleUDPClient(self.oscapplist[ipad][0],self.oscapplist[ipad][1]))
-                    logging.info("Connect IPAD %s OK" % ipad)
+                for osc in self.oscapplist:
+                    self.oscapp_client.append(SimpleUDPClient(self.oscapplist[osc][0],self.oscapplist[osc][1]))
+                    logging.info("Connect OSC client %s OK" % osc)
                 
             else:
-                self.oscapp_client.append(SimpleUDPClient(self.ipad_address, self.ipad_port))
-
-                #self.oscapp_client = SimpleUDPClient(self.ipad_address, self.ipad_port)
-                logging.info("Connect IPAD OK")
+                logging.error('No OSC client configured in config.ini file')
+                return False
 
             send_osc("/Connexion/value",'Connnect Ipad OK',self.oscapp_client[0])
 
@@ -126,7 +124,7 @@ class BridgeX18toIpad(object):
             
         except:
             E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
-            logging.error("cannot connect to IPAD %s" % E)
+            logging.error("cannot connect to OSC client %s" % E)
             return False 
 
     def connectX18(self):
@@ -146,7 +144,7 @@ class BridgeX18toIpad(object):
                 self.client.connect((self.x18_address, self.x18_port))
                 break
             except:
-                logging.info("TRying connect to X18...")
+                logging.info("Trying connect to X18...")
                 E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
                 tried -= 1
                 time.sleep(10)
@@ -158,22 +156,62 @@ class BridgeX18toIpad(object):
             logging.info("connected to X18 OK")
             return True
 
+    def _refreshRequest(self,client):
+        '''
+        Send a refresh request for all osc path found in self.refreshOSC
+        '''
+        
+        logging.debug(f"Refresh request {self.refreshOSC}")
+
+        for refresh in self.refreshOSC:
+            if refresh == 'buses':                
+                for ch in range(1,17):
+                    for bus in range(1,7):
+                        oscpath = self.refreshOSC[refresh].format(channel=ch,bus=bus)                        
+                        client.send(OSC.OSCMessage(oscpath))
+
+            elif refresh == 'returnfader':
+                for bus in range(1,7):
+                    oscpath = self.refreshOSC[refresh].format(bus=bus)
+                    client.send(OSC.OSCMessage(oscpath))
+
+            elif refresh == 'returnmute':
+                for bus in range(1,7):
+                    oscpath = self.refreshOSC[refresh].format(bus=bus)
+                    client.send(OSC.OSCMessage(oscpath))
+
+            elif refresh == 'main':
+                for ch in range(1,17):           
+                    oscpath = self.refreshOSC[refresh].format(channel=ch)
+                    client.send(OSC.OSCMessage(oscpath))
+
+            elif refresh == 'mainfader':
+                oscpath = self.refreshOSC[refresh]
+                client.send(OSC.OSCMessage(oscpath))
+
+            elif refresh == 'mainmute':
+                oscpath = self.refreshOSC[refresh]
+                client.send(OSC.OSCMessage(oscpath))
+
+
+
     def request_x18_to_send_change_notifications(self,client):
-        """request_x18_to_send_change_notifications sends /xremote repeatedly to
-        mixing desk to make sure changes are transmitted to our server.
-        """
+        '''
+        Sends /xremote repeatedly to mixing desk to make sure changes are transmitted to our server.
+        '''
         t = threading.currentThread()
         
         while getattr(t, "active"):     
             try:   
                 client.send(OSC.OSCMessage("/xremote"))
+                self._refreshRequest(client)
                 time.sleep(7)
             except:
                 E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
                 logging.error(E)
 
 
-    def relay_msg_to_Ipad(self,addr, tags, data, client_address):        
+    def relay_msg_to_OSC_client(self,addr, tags, data, client_address):        
         
         logging.debug('%s : %s' % (addr.decode('utf8'),data))
 
@@ -183,9 +221,12 @@ class BridgeX18toIpad(object):
             send_osc(addr.decode('utf8'),data,app)
 
         
-    def get_all_x18_change_messages(self):       
+    def get_all_x18_change_messages(self):
+        '''
+        Listen all OSC messages from the X18 Mixer
+        '''
        
-        self.server.addMsgHandler("default", self.relay_msg_to_Ipad)
+        self.server.addMsgHandler("default", self.relay_msg_to_OSC_client)        
 
         thread = threading.Thread(target=self.request_x18_to_send_change_notifications, kwargs = {"client": self.client})
         thread.active = True
@@ -194,7 +235,7 @@ class BridgeX18toIpad(object):
 
         try:
             logging.info("Starting Listener")                
-            self.server.serve_forever()        
+            self.server.serve_forever()
         except (KeyboardInterrupt, SystemExit):
             thread.active = False
             logging.info("Waiting for complete shutdown..")        
@@ -209,21 +250,26 @@ def send_osc(msg=None, value=None, oscclient=None):
         else:
             oscclient.send_message(msg, value)            
 
-def listenX18(x18_address=None, x18_port=None,oscapplist=None):
-    bx18 = BridgeX18toIpad(x18_address=x18_address, x18_port=x18_port,oscapplist=oscapplist)
+def listenX18(x18_address=None, x18_port=None,oscapplist=None,refreshOSC=None):
+    bx18 = BridgeX18toOSC(x18_address=x18_address, x18_port=x18_port,oscapplist=oscapplist,refreshOSC=refreshOSC)
     if bx18.status is None:
         bx18.get_all_x18_change_messages()
     else:
         logging.error(bx18.status)
     
-def readConfigFile(configfile=None,key=None):    
-    oscapplist = {}
+def readConfigFile(configfile=None,section=None,key=None):    
+    conflist = {}
     config = configparser.ConfigParser()
     config.read(configfile)
-    if key in config.sections():
-        for app in config[key]:            
-            oscapplist[app] = [config[key][app].split(':')[0] , int(config[key][app].split(':')[1])]
-        return oscapplist
+    if section in config.sections():
+        if key is None:
+            for app in config[section]:            
+                conflist[app] = [config[section][app].split(':')[0] , int(config[section][app].split(':')[1])]
+            return conflist
+        elif key in config[section] :
+            return config[section][key]
+        else:
+            return None
     else:
         return None
 
@@ -236,8 +282,8 @@ def decodeArgs():
     #parser.add_argument('-h', '--help', help='help',const='HELP',nargs='?')
     parser.add_argument('-x18add', help="Adresse IP X18 (defaut 192.168.0.3)", default="192.168.0.3")
     parser.add_argument('-x18port', help="Port OSC X18 (defaut 10024)",default=10024)
-    parser.add_argument('-ipadadd', help="Adresse IP Ipad (defaut 192.168.0.5)",default='192.168.0.5')
-    parser.add_argument('-ipadport', help="Port OSC IPAD (defaut 8000)",default=8000)
+    parser.add_argument('-oscadd', help="Adresse IP OSC client (defaut 192.168.0.5)",default='192.168.0.5')
+    parser.add_argument('-oscport', help="Port OSC client (defaut 8000)",default=8000)
     parser.add_argument('-loglevel', help="niveau de log [DEBUG,ERROR,WARNING,INFO]",default='INFO')
     parser.add_argument('-logfile', help="log file",default='/home/pi/logs/readX18.log')
     parser.add_argument('-config', help="config file",default='config.ini')
@@ -248,8 +294,8 @@ def msg():
         -h, help
         -x18add     :   Adresse IP X18 (defaut 192.168.0.3)
         -x18port    :   Port OSC X18 (defaut 10024)
-        -ipadadd    :   Adresse IP Ipad (defaut 192.168.0.5)
-        -ipadport   :   Port OSC IPAD (defaut 8000)
+        -oscadd    :   Adresse IP Ipad (defaut 192.168.0.5)
+        -oscport   :   Port OSC IPAD (defaut 8000)
         -loglevel   :   niveau de log [DEBUG,ERROR,WARNING,INFO] default=INFO
         -config     :   Fichier de configuration (defaut config.ini)
         -logfile    :   log file defaut /home/pi/logs/readX18.log
@@ -259,15 +305,16 @@ if __name__ == '__main__':
     
     
     arg_analyze=decodeArgs()
-    ipad_address = arg_analyze.ipadadd
-    ipad_port = arg_analyze.ipadport
+    osc_client_address = arg_analyze.oscadd
+    osc_port = arg_analyze.oscport
     x18_address = arg_analyze.x18add
     x18_port = arg_analyze.x18port
     loglevel = arg_analyze.loglevel
     logfile  = arg_analyze.logfile
     configfile = arg_analyze.config
 
-    
+    refreshOSC = {'buses':None,'main':None,'returnfader':None,'returnmute':None,'mainfader':None,'mainmute':None}
+
     if logfile == 'None' :
         logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - readX18 : %(message)s', datefmt='%Y%m%d%I%M%S ')
     else:
@@ -276,13 +323,23 @@ if __name__ == '__main__':
 
     if os.path.isfile(configfile):
         logging.info('Read config from %s' % configfile)
-        oscapplist =  readConfigFile(configfile,'OSCApp')
+        oscapplist =  readConfigFile(configfile,section='OSCApp')
+        x18_address = readConfigFile(configfile,section='X18',key='ip')
+        x18_port = readConfigFile(configfile,section='X18',key='port')
+        if x18_port is None:
+            x18_port = 10024
+        else:
+            x18_port = int(x18_port)
+
+        for k in refreshOSC:
+            refreshOSC[k] = readConfigFile(configfile,section='Refresh',key=k)
+        logging.info('Refresh OSC path : %s' % refreshOSC)
     else:
-        oscapplist = {'default':[ipad_address,ipad_port]}
+        oscapplist = {'default':[osc_client_address,osc_port]}
 
     if oscapplist is None:
-        logging.error('No Ipads configured in %s' % configfile)
-        exit -1
+        logging.error('No OSC client configured in %s' % configfile)
+        exit(-1)
     else:
         logging.info('%s' % oscapplist)
 
@@ -297,12 +354,12 @@ if __name__ == '__main__':
     with open(SYNCHRO,'r') as fifo:
         logging.debug("SYNCHRO fifo opened")
         sync = fifo.read()
-        fifo.close()
+    fifo.close()
 
     logging.info('Syncho OK, start X18 listener') 
 
 
-    listenX18(x18_address=x18_address, x18_port=x18_port,oscapplist=oscapplist)
+    listenX18(x18_address=x18_address, x18_port=x18_port,oscapplist=oscapplist,refreshOSC=refreshOSC)
     
 
     

@@ -22,6 +22,7 @@ import os
 import errno
 from collections import deque
 from threading import Timer
+import configparser
 
 SYNCHRO = '/tmp/readX18.synchro'
 
@@ -74,7 +75,7 @@ class HeartBeat(object):
 
 class X18ToIpadRelay():
     status = None
-    def __init__(self, srv_address=None, srv_port=None, x18_address=None, x18_port=None):
+    def __init__(self, srv_address=None, srv_port=None, x18_address=None, x18_port=None,refreshOSC=None):
         super(X18ToIpadRelay, self).__init__()
         self.srv_address = srv_address
         self.srv_port = srv_port
@@ -82,7 +83,9 @@ class X18ToIpadRelay():
         self.x18_port = x18_port        
         self.dispatcher = Dispatcher()
         self.dispatcher.map("/ch/*", self.ch_handler)
+        #self.dispatcher.map("/refresh", self.refresh_handler)
         self.dispatcher.set_default_handler(self.default_handler)
+        self.refreshOSC = refreshOSC
         if self.connectX18():
             self.startListener()
         else:
@@ -173,6 +176,28 @@ class X18ToIpadRelay():
         logging.debug('send to X18 %s : %s' % (value,address))
         self.oscclientx18.send_message(address, value)
 
+    def refresh_handler(self,address, *args):
+        '''
+        Refresh OSC client with X18 currebt values
+        '''
+        logging.debug(f"Refresh request {address}: {args}")
+        logging.debug(f"Refresh request {self.refreshOSC}")
+
+
+        for refresh in self.refreshOSC:
+            if refresh == 'buses':
+                for ch in range(1,17):
+                    for bus in range(1,7):
+                        oscpath = self.refreshOSC[refresh].format(channel=ch,bus=bus)
+                        logging.debug(f"Refresh request {oscpath}")
+                        self.oscclientx18.send_message(oscpath,None)
+
+            elif refresh == 'main':
+                for ch in range(1,17):           
+                    oscpath = self.refreshOSC[refresh].format(channel=ch)
+                    logging.debug(f"Refresh request {oscpath}")
+                    self.oscclientx18.send_message(oscpath,None)
+        
     def ch_handler(self,address, *args):
         '''
         /ch OAS messages from Lemur handler
@@ -205,6 +230,7 @@ def decodeArgs():
     parser.add_argument('-ipadadd', help="Adresse IP Ipad (defaut 192.168.0.5)",default='192.168.0.5')
     parser.add_argument('-ipadport', help="Port OSC IPAD (defaut 8000)",default=8000)
     parser.add_argument('-logfile', help="log file",default='/home/pi/logs/sendOSCToIpad.log')
+    parser.add_argument('-config', help="config file",default='config.ini')
     return parser.parse_args()
 
 def msg():
@@ -218,12 +244,30 @@ def msg():
         -ipadadd    :   Adresse IP Ipad defaut 192.168.0.5
         -ipadport   :   Port OSC IPAD defaut 8000)
         -logfile    :   log file defaut /home/pi/logs/sendOSCToIpad.log
+        -config     :   Fichier de configuration (defaut config.ini)
+
         '''%sys.argv[0]
 
-def startServer(srv_address=None, srv_port=None, x18_address=None, x18_port=None):
-    relay = X18ToIpadRelay(srv_address=srv_address, srv_port=srv_port, x18_address=x18_address, x18_port=x18_port) 
+def startServer(srv_address=None, srv_port=None, x18_address=None, x18_port=None,refreshOSC=None):
+    relay = X18ToIpadRelay(srv_address=srv_address, srv_port=srv_port, x18_address=x18_address, x18_port=x18_port,refreshOSC=refreshOSC) 
     if relay.status is not None:
         logging.error(relay.status)
+
+def readConfigFile(configfile=None,section=None,key=None):    
+    conflist = {}
+    config = configparser.ConfigParser()
+    config.read(configfile)
+    if section in config.sections():
+        if key is None:
+            for app in config[section]:            
+                conflist[app] = [config[section][app].split(':')[0] , int(config[section][app].split(':')[1])]
+            return conflist
+        elif key in config[section] :
+            return config[section][key]
+        else:
+            return None
+    else:
+        return None
 
 if __name__ == '__main__':
     
@@ -237,11 +281,27 @@ if __name__ == '__main__':
 
     loglevel = arg_analyze.loglevel
     logfile  = arg_analyze.logfile
+    configfile = arg_analyze.config
 
     if logfile == 'None' :
         logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - sendOSCToIpad : %(message)s', datefmt='%Y%m%d%I%M%S ')
     else:
         logging.basicConfig(filename=logfile,filemode='w',level=loglevel, format='%(asctime)s - %(levelname)s - sendOSCToIpad : %(message)s', datefmt='%Y%m%d%I%M%S ')
+
+    refreshOSC = {'buses':None,'main':None}
+
+    if os.path.isfile(configfile):
+        logging.info('Read config from %s' % configfile)        
+        x18_address = readConfigFile(configfile,section='X18',key='ip')
+        x18_port = readConfigFile(configfile,section='X18',key='port')
+        if x18_port is None:
+            x18_port = 10024
+        else:
+            x18_port = int(x18_port)
+
+        for k in refreshOSC:
+            refreshOSC[k] = readConfigFile(configfile,section='X18',key=k)
+        logging.info('Refresh OSC path : %s' % refreshOSC)
 
 
     ## Create Named Pipe, if not exists, for synchronisation with readX18.py
@@ -279,6 +339,6 @@ if __name__ == '__main__':
         logging.info('Connected to IPAD')
 
     hb = HeartBeat(.3,"/osclemur/led",oscclient,send_osc)
-    startServer(srv_address=srv_address, srv_port=srv_port, x18_address=x18_address, x18_port=x18_port)
+    startServer(srv_address=srv_address, srv_port=srv_port, x18_address=x18_address, x18_port=x18_port,refreshOSC=refreshOSC)
     hb.stop()
     

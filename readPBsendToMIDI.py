@@ -93,109 +93,140 @@ class PedalBoardReader(object):
                 self.lastkey == key
                 return True
 
+    def eventReader(self,sock):
+        '''
+        Read Keyboards events
+        '''
+        tap = deque()
+        elapse = None
+        prevelapse = None
+        mean = None        
+        puradata = False
+
+        for event in self.dev.read_loop():
+            if self.stopNow :
+                logging.info('Stop request receive')
+                exit(99)
+
+            if event.type == evdev.ecodes.EV_KEY:                    
+                if event.value == 1:             
+                    logging.debug('Get : %s' % evdev.categorize(event))
+                    
+                    channel,curbank = self.getbank.curbank()
+                    logging.debug('Channel : %s, Bank : %s ' % (channel,curbank))
+                    
+                    if len(self.dev.active_keys()) > 0:
+                        if self.dev.active_keys()[0] in self.ctrl_keys:
+                            logging.debug('Get %s ' % self.ctrl_keys[self.dev.active_keys()[0]])                                
+                            ##############################################################
+                            # TAP TEMPO
+                            ##############################################################
+                            ## 20210108 drop non registered key
+                            if len(self.dev.active_keys()) == 0:
+                                continue
+                            if not self.dev.active_keys()[0] in self.ctrl_keys:
+                                continue
+
+                            if self.ctrl_keys[self.dev.active_keys()[0]] == "TAP_TEMPO":
+                                if prevelapse is None:
+                                    prevelapse = perf_counter()
+                                else:
+                                    elapse = perf_counter()
+                                    ms = elapse - prevelapse                                
+                                    prevelapse = elapse
+                                    if ms > 1 :     # More than 1 sec. erase tap tab
+                                        tap = deque()
+                                    else:
+                                        tap.append(ms)
+
+                                if len(tap) >= 3:
+                                    self.averagetime, self.bpm = self.averagetimes(tap)
+                                    # send current tempo to other readers instances
+                                    for other in self.otherReaders:
+                                        other.averagetime = self.averagetime
+                                        other.bpm = self.bpm
+
+                                    clockvalue = '%.4d' % int(self.averagetime*1000)
+                                    logging.debug('Clock Value :%s, BPM : %s' % (clockvalue,int(self.bpm)))
+                                    try:
+                                        send_osc(msg="TEMPO", value=int(self.bpm) , oscclient=self.oscclient)
+                                    except:                                        
+                                        E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
+                                        logging.error('04 - %s' % E)
+                                        send_osc(msg="/errormess", value=E , oscclient=self.oscclient)
+                                    tap.popleft()
+
+                            ##############################################################
+                            # START/STOP
+                            ##############################################################
+                            elif self.ctrl_keys[self.dev.active_keys()[0]] == "START_STOP":                                    
+                                tap = deque()
+                                elapse = None
+                                prevelapse = None
+                                mean = None
+
+                                logging.debug('%s' % mido.get_output_names())
+
+                                if not self._avoidMultipleTap(self.dev.active_keys()[0]):
+                                    continue
+
+                                logging.debug('self.playing %s' % self.playing)
+                                if not self.playing:
+                                    logging.debug('Send START')
+                                    self.midioutport.send(mido.Message('start'))                                        
+                                    self.play = StartStop(self.averagetime/24.0, self.midioutport) # it auto-starts, no need of rt.start()
+                                    # send current state to other readers instances
+                                    for other in self.otherReaders:
+                                        other.playing = True
+                                        other.play = self.play
+                                else:
+                                    for other in self.otherReaders:
+                                        other.playing = False
+                                    
+                                    self.play.stop() # better in a try/finally block to make sure the program ends!
+                                    logging.debug('Send STOP')
+                                    self.midioutport.send(mido.Message('stop'))
+
+                            ##############################################################
+                            # NEXT BANK
+                            ##############################################################
+                            elif self.ctrl_keys[self.dev.active_keys()[0]] == "NEXT_PGM":                                    
+                                if not self._avoidMultipleTap(self.dev.active_keys()[0]):
+                                    continue
+                                channel,curbank = self.getbank.curbank()
+                                curbank += 1     
+                                logging.debug('Channel : %s, Bank : %s ' % (channel,curbank))                               
+                                self.midioutport.send(mido.Message('program_change',channel=channel,program=curbank))
+
+                            ## 250210109 Add Reset button for emergency situations
+                            elif self.ctrl_keys[self.dev.active_keys()[0]] == "RESET":
+                                send_osc(msg="/errormess", value='RESET' , oscclient=self.oscclient)
+                                logging.info('Reset service')
+                                for other in self.otherReaders:
+                                    other.stopNow = True
+                                exit(99)
+
     def readPedalBoard(self):
         '''
         Read key pressed from the pedal board
         '''        
         logging.info('Reading Pedal Board')
-        tap = deque()
-        elapse = None
-        prevelapse = None
-        mean = None        
-        puradata = False        
-
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         try:
-            for event in self.dev.read_loop():
-                if self.stopNow :
-                    logging.info('Stop request receive')
-                    exit(-3)
-
-                if event.type == evdev.ecodes.EV_KEY:
-                    logging.debug('Get : %s' % evdev.categorize(event))                        
-                    if event.value == 1:                        
-                        if len(self.dev.active_keys()) > 0:
-                            if self.dev.active_keys()[0] in self.ctrl_keys:
-                                logging.debug('Get %s ' % self.ctrl_keys[self.dev.active_keys()[0]])
-                                ##############################################################
-                                # TAP TEMPO
-                                ##############################################################
-                                if self.ctrl_keys[self.dev.active_keys()[0]] == "TAP_TEMPO":
-                                    if prevelapse is None:
-                                        prevelapse = perf_counter()
-                                    else:
-                                        elapse = perf_counter()
-                                        ms = elapse - prevelapse                                
-                                        prevelapse = elapse
-                                        if ms > 1 :     # More than 1 sec. erase tap tab
-                                            tap = deque()
-                                        else:
-                                            tap.append(ms)
-
-                                    if len(tap) >= 3:
-                                        self.averagetime, self.bpm = self.averagetimes(tap)
-                                        # send current tempo to other readers instances
-                                        for other in self.otherReaders:
-                                            other.averagetime = self.averagetime
-                                            other.bpm = self.bpm
-
-                                        clockvalue = '%.4d' % int(self.averagetime*1000)
-                                        logging.debug('Clock Value :%s, BPM : %s' % (clockvalue,int(self.bpm)))
-                                        try:
-                                            send_osc(msg="TEMPO", value=int(self.bpm) , oscclient=self.oscclient)
-                                        except:
-                                            E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
-                                            logging.error(E)
-                                        tap.popleft()
-
-                                ##############################################################
-                                # START/STOP
-                                ##############################################################
-                                elif self.ctrl_keys[self.dev.active_keys()[0]] == "START_STOP":                                    
-                                    tap = deque()
-                                    elapse = None
-                                    prevelapse = None
-                                    mean = None
-
-                                    if not self._avoidMultipleTap(self.dev.active_keys()[0]):
-                                        continue
-
-                                    if not self.playing:                                        
-                                        self.midioutport.send(mido.Message('start'))                                        
-                                        self.play = StartStop(self.averagetime/24.0, self.midioutport) # it auto-starts, no need of rt.start()
-                                        # send current state to other readers instances
-                                        for other in self.otherReaders:
-                                            other.playing = True
-                                            other.play = self.play
-                                    else:
-                                        for other in self.otherReaders:
-                                            other.playing = False
-                                        
-                                        self.play.stop() # better in a try/finally block to make sure the program ends!
-                                        self.midioutport.send(mido.Message('stop'))
-
-                                ##############################################################
-                                # NEXT BANK
-                                ##############################################################
-                                elif self.ctrl_keys[self.dev.active_keys()[0]] == "NEXT_PGM":                                    
-                                    if not self._avoidMultipleTap(self.dev.active_keys()[0]):
-                                        continue
-                                    channel,curbank = self.getbank.curbank()
-                                    curbank += 1     
-                                    logging.debug('Channel : %s, Bank : %s ' % (channel,curbank))                               
-                                    self.midioutport.send(mido.Message('program_change',channel=channel,program=curbank))
-
-
+            self.eventReader(sock)
+                                
         except (KeyboardInterrupt, SystemExit):            
                 logging.info("2 - Shutdown from readPedalBoard ...")             
                 return 99
         except (OSError) as err:
-            logging.error(err)
+            logging.error('05 - %s' % err)
+            send_osc(msg="/errormess", value=err , oscclient=self.oscclient)
             return -2
         except:        
             E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
-            logging.error(E)
+            logging.error('06 - %s' % E)
+            send_osc(msg="/errormess", value=E , oscclient=self.oscclient)
             sock.close()
             return -1
 
@@ -352,14 +383,14 @@ def dicoverMidiDevice(mididev=None,wait=10,retry=10,oscclient=None):
         devices = mido.get_output_names()
         for d in devices:            
             if mididev in d:
-                logging.info('Device found : %s' % d)
+                logging.info('Output midi device found : %s' % d)
                 send_osc(msg="CONNECT", value="Found %s" % d , oscclient=oscclient)                
                 midiout = d
         
         devices = mido.get_input_names()
         for d in devices:            
             if mididev in d:
-                logging.info('Device found : %s' % d)
+                logging.info('Input midi device found : %s' % d)
                 send_osc(msg="CONNECT", value="Found %s" % d , oscclient=oscclient)                
                 midiin = d
         
@@ -375,7 +406,7 @@ def dicoverMidiDevice(mididev=None,wait=10,retry=10,oscclient=None):
             return(midiin,midiout)
 
 
-def discoverPedalBoard(footboard=None,wait=10,retry=10,oscclient=None):
+def discoverPedalBoard(footboard=None,wait=10,retry=10,oscclient=None,usedFootdev=None):
     
     send_osc(msg="CONNECT", value="Discover BT", oscclient=oscclient)
     logging.info('Searching Pedal Board %s ...' % footboard)
@@ -385,7 +416,12 @@ def discoverPedalBoard(footboard=None,wait=10,retry=10,oscclient=None):
 
     while footdev is None:
         devices = evdev.list_devices()
-        for d in devices:
+        for d in devices:            
+            if d in usedFootdev:
+                tried += 1
+                if tried >= retry:
+                    return (None,None) 
+                continue
             dev = evdev.InputDevice(d)
             if dev.name.strip() == footboard.strip():
                 logging.info('Device found : %s' % footboard)
@@ -397,7 +433,7 @@ def discoverPedalBoard(footboard=None,wait=10,retry=10,oscclient=None):
                 time.sleep(wait)
                 tried += 1
                 if tried >= retry:
-                    return (footdev,dev)
+                    return (None,None) 
         time.sleep(3)
 
 
@@ -457,6 +493,9 @@ def readConfigFile(configfile=None):
                     keys[int(config[b]['TAP_TEMPO'])] = 'TAP_TEMPO'
                 if 'NEXT_PGM' in config[b]:
                     keys[int(config[b]['NEXT_PGM'])] = 'NEXT_PGM'
+                ## 20210109 Add reset button
+                if 'RESET' in config[b]:
+                    keys[int(config[b]['RESET'])] = 'RESET'
                 keyconfig[b] = keys
 
             elif 'Buttons' in config.sections():
@@ -466,6 +505,9 @@ def readConfigFile(configfile=None):
                     keys[int(config['Buttons']['TAP_TEMPO'])] = 'TAP_TEMPO'
                 if 'NEXT_PGM' in config['Buttons']:
                     keys[int(config['Buttons']['NEXT_PGM'])] = 'NEXT_PGM'
+                ## 20210109 Add reset button
+                if 'RESET' in config['Buttons']:
+                    keys[int(config['Buttons']['RESET'])] = 'RESET'
                 keyconfig[b] = keys
 
         return(True,fb,midi,keyconfig)
@@ -494,7 +536,7 @@ def main():
     rc,footboards,mididevice,keyconfig =  readConfigFile(configfile)
 
     if not rc:
-        logging.error('No suitable config found in %s' % configfile)
+        logging.error('07 - No suitable config found in %s' % configfile)
         exit(-1)
 
     
@@ -506,7 +548,7 @@ def main():
         oscclient = SimpleUDPClient(ipad_ip, ipad_osc_port)
     except:
         E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
-        logging.error(E)
+        logging.error('01 - %s' % E)
 
     ######################################################
     # Attempt to send OSC to OSC App to validate connexion
@@ -523,7 +565,7 @@ def main():
             time.sleep(WAIT)
 
     if retry <= 0:
-        logging.error("cannot connect to IPAD %s" % E)
+        logging.error("02- cannot connect to IPAD %s" % E)
         exit(-1)
     else:
         logging.info('Connected to IPAD')
@@ -532,22 +574,24 @@ def main():
     # Pedals Boards Connexion
     #####################################################################
     allpb = {}
+    usedFootdev = []
     for pb in footboards:
-        retry = RETRY
+        retry = 5
         while retry > 0:
             try:
                 ## Try to connect pedal board
                 logging.info('Trying connect %s ...' % pb)
-                footdev,dev = discoverPedalBoard(footboard=pb,wait=WAIT,oscclient=oscclient)
-                allpb[pb] = dev
+                footdev,dev = discoverPedalBoard(footboard=pb,wait=WAIT,retry=retry,oscclient=oscclient,usedFootdev=usedFootdev)
+                if dev is not None:                    
+                    allpb[footdev] = [dev,pb]
+                    usedFootdev.append(footdev)
 
             except (KeyboardInterrupt, SystemExit):            
                 logging.info("3 - Shutdown ...")             
                 return
 
             if footdev is None:
-                logging.error('Time out get pedalboard')
-                exit( -1)
+                logging.error('03 - Time out get pedalboard')                
 
             logging.info('Got %s' % footdev)
             break
@@ -579,8 +623,8 @@ def main():
     ##########################################
     readers = []
     for pb in allpb:
-        logging.debug('KEYS %s' % keyconfig[pb] )
-        readers.append(PedalBoardReader(dev=allpb[pb],oscclient=oscclient,midioutport=midioutport,getbank=getbank,ctrl_keys=keyconfig[pb]))
+        logging.debug('KEYS %s' % keyconfig[allpb[pb][1]])
+        readers.append(PedalBoardReader(dev=allpb[pb][0],oscclient=oscclient,midioutport=midioutport,getbank=getbank,ctrl_keys=keyconfig[allpb[pb][1]]))
 
     readthreads = []
 
@@ -588,13 +632,24 @@ def main():
         reader.otherReaders = readers
 
         readthreads.append(threading.Thread(target=reader.readPedalBoard))
-    
-    for readthread in readthreads:   
+
+    for readthread in readthreads:
         readthread.start()
 
-
     try:
-        while True:        
+        while True:
+            ## If readthreads is 0 length, then we shutdown.
+            ## This occurs if a reset has been requested
+            if len(readthreads) == 0:
+                getbank.stop()
+                hb.stop()
+                logging.info('Exit code 9')
+                return 9
+
+            for i,readthread in enumerate(readthreads):
+                if not readthread.is_alive():
+                    readthreads.pop(i)
+                #logging.debug("Is alive %s" % readthread.is_alive())
             time.sleep(1)
 
     except (KeyboardInterrupt, SystemExit):
@@ -615,7 +670,7 @@ def main():
             break
         getbank.stop()
         hb.stop()
-        return
+        return 0
 
     # if rc == 99 :
     #     getbank.stop()
@@ -636,4 +691,6 @@ def main():
 
 
 if __name__ == '__main__': 
-    main()
+    cr = main()
+    exit(cr)
+
