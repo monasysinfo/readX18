@@ -57,7 +57,7 @@ class PedalBoardReader(object):
     stopNow  = False    # If True, stop the reader
     play     = None     # link to the StartStop object
 
-    def __init__(self,dev=None,oscclient=None,midioutport=None,getbank=None,ctrl_keys=None):
+    def __init__(self,dev=None,oscclient=None,midioutport=None,getbank=None,ctrl_keys=None,stopTic=0):
         self.dev = dev        
         self.oscclient = oscclient
         self.midioutport = midioutport
@@ -67,8 +67,10 @@ class PedalBoardReader(object):
         self.lastkey = None
         self.lktimstamp = 0  # Timestamp of the last key
         self.averagetime = self.defTempo
+        self.stopTic = stopTic
         self.bpm = None
-
+        if self.play is None:
+            self.play = StartStop(self.midioutport,stopTic=self.stopTic) # it auto-starts, no need of rt.start()
 
     def _avoidMultipleTap(self,key):
         '''
@@ -159,13 +161,15 @@ class PedalBoardReader(object):
                             ##############################################################
                             # START/STOP
                             ##############################################################
-                            elif self.ctrl_keys[self.dev.active_keys()[0]] == "START_STOP":                                    
+                            elif self.ctrl_keys[self.dev.active_keys()[0]] == "START_STOP":
                                 tap = deque()
                                 elapse = None
                                 prevelapse = None
                                 mean = None
 
-                                logging.debug('%s' % mido.get_output_names())
+                                ## 20210131 : De multiples appel à mido.get_output_names() (entre 13 et 15) provoque un
+                                ## plantage ALSA, Ok après mise en commentaire
+                                ## logging.debug('%s' % mido.get_output_names())
 
                                 if not self._avoidMultipleTap(self.dev.active_keys()[0]):
                                     continue
@@ -173,8 +177,10 @@ class PedalBoardReader(object):
                                 logging.debug('self.playing %s' % self.playing)
                                 if not self.playing:
                                     logging.debug('Send START')
-                                    self.midioutport.send(mido.Message('start'))                                        
-                                    self.play = StartStop(self.averagetime/24.0, self.midioutport) # it auto-starts, no need of rt.start()
+                                    self.midioutport.send(mido.Message('start'))
+                                    self.play.setInterval(self.averagetime/24.0)
+                                    self.play.start()
+
                                     # send current state to other readers instances
                                     for other in self.otherReaders:
                                         other.playing = True
@@ -182,7 +188,7 @@ class PedalBoardReader(object):
                                 else:
                                     for other in self.otherReaders:
                                         other.playing = False
-                                    
+
                                     self.play.stop() # better in a try/finally block to make sure the program ends!
                                     logging.debug('Send STOP')
                                     self.midioutport.send(mido.Message('stop'))
@@ -324,21 +330,25 @@ class ReadMidiIn(object):
         return self.currentBank
 
 class StartStop(object):    
-    def __init__(self, interval, outport):
+    def __init__(self, outport,stopTic):
         self._timer     = None
-        self.interval   = interval        
-        self.outport    = outport        
+        self.interval   = None
+        self.outport    = outport
         self.is_running = False
         self.bar        = 0
         self.stopreq    = False
-        self.start()
+        self.stopTic = stopTic        
+        #self.start()
+
+    def setInterval(self,interval):
+        self.interval = interval
 
     def _sendClock(self):    
         self.outport.send(mido.Message('clock'))   
 
     def _run(self):
         self.bar += 1
-        if self.bar == 98:            
+        if self.stopTic == 0:
             if self.stopreq:
                 self.stopreq = False
                 self._timer.cancel()
@@ -346,6 +356,17 @@ class StartStop(object):
                 return
             else:
                 self.bar = 0
+                    
+        else:   
+            ## Arrêt au premier temps de la mesure suivante
+            if self.bar == self.stopTic:            
+                if self.stopreq:
+                    self.stopreq = False
+                    self._timer.cancel()
+                    self.is_running = False
+                    return
+                else:
+                    self.bar = 0
         
         self.is_running = False
         self.start()        
@@ -355,7 +376,7 @@ class StartStop(object):
         if not self.is_running:
             self._timer = Timer(self.interval, self._run)
             self._timer.start()
-            self.is_running = True
+            self.is_running = True            
 
     def stop(self):        
         self.stopreq = True
@@ -446,7 +467,7 @@ def msg():
         -ipadport   Port OSC IPAD (defaut 8000)
         -loglevel   niveau de log [DEBUG,ERROR,WARNING,INFO]
         -config     Fichier de configuration (defaut config.ini)
-        -logfile	log file defaut /home/pi/logs/readPBsendToMIDI.log
+        -logfile    log file defaut /home/pi/logs/readPBsendToMIDI.log
 
         '''%sys.argv[0]
 
@@ -470,6 +491,7 @@ def readConfigFile(configfile=None):
     fb = []
     midi = None
     keyconfig = {}
+    stopTic = 0
     
     if os.path.isfile(configfile):
         config = configparser.ConfigParser()
@@ -478,6 +500,11 @@ def readConfigFile(configfile=None):
             if 'pbs' in config['PedalBoard']:
                 fb = fb + config['PedalBoard']['pbs'].split(',')
                 #fb.append(config['PedalBoard']['pbs'])
+            if 'stopTic' in config['PedalBoard']:
+                try:
+                    stopTic = int(config['PedalBoard']['stopTic'])
+                except:
+                    stopTic = 0
             
 
         if 'Midi' in config.sections():
@@ -510,9 +537,9 @@ def readConfigFile(configfile=None):
                     keys[int(config['Buttons']['RESET'])] = 'RESET'
                 keyconfig[b] = keys
 
-        return(True,fb,midi,keyconfig)
+        return(True,fb,midi,keyconfig,stopTic)
     else:
-        return(False,None,None,None)
+        return(False,None,None,None,None)
 
 def main():
     arg_analyze=decodeArgs()
@@ -533,7 +560,7 @@ def main():
 
     configfile = arg_analyze.config
 
-    rc,footboards,mididevice,keyconfig =  readConfigFile(configfile)
+    rc,footboards,mididevice,keyconfig,stopTic =  readConfigFile(configfile)
 
     if not rc:
         logging.error('07 - No suitable config found in %s' % configfile)
@@ -603,8 +630,8 @@ def main():
     midiin,midiout = dicoverMidiDevice(mididev=mididevice,wait=WAIT,retry=retry,oscclient=oscclient)
 
     if midiin is None and midiout is None:
-    	logging.erroe('No midi device available')
-    	exit( -1)
+        logging.erroe('No midi device available')
+        exit( -1)
 
     midioutport   = mido.open_output(midiout)
     midiinputport = mido.open_input(midiin)
@@ -623,8 +650,9 @@ def main():
     ##########################################
     readers = []
     for pb in allpb:
-        logging.debug('KEYS %s' % keyconfig[allpb[pb][1]])
-        readers.append(PedalBoardReader(dev=allpb[pb][0],oscclient=oscclient,midioutport=midioutport,getbank=getbank,ctrl_keys=keyconfig[allpb[pb][1]]))
+        logging.debug('KEYS %s - StopTic %s' % (keyconfig[allpb[pb][1]],stopTic))
+        readers.append(PedalBoardReader(dev=allpb[pb][0],oscclient=oscclient,midioutport=midioutport,getbank=getbank,ctrl_keys=keyconfig[allpb[pb][1]],stopTic=stopTic))
+        logging.debug('AFTER Instance PedalBoardReader')
 
     readthreads = []
 
