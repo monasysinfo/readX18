@@ -56,8 +56,9 @@ class PedalBoardReader(object):
     otherReaders = None # List of all readers to transmit current state (playing/stop)
     stopNow  = False    # If True, stop the reader
     play     = None     # link to the StartStop object
+    midinotes = {'C2':36}
 
-    def __init__(self,dev=None,oscclient=None,midioutport=None,getbank=None,ctrl_keys=None,stopTic=0):
+    def __init__(self,dev=None,oscclient=None,midioutport=None,getbank=None,ctrl_keys=None,stopTic=0,notemapping=None):
         self.dev = dev        
         self.oscclient = oscclient
         self.midioutport = midioutport
@@ -69,6 +70,8 @@ class PedalBoardReader(object):
         self.averagetime = self.defTempo
         self.stopTic = stopTic
         self.bpm = None
+        self.notemapping = notemapping
+        logging.debug('Note Mapping %s' % self.notemapping)
         if self.play is None:
             self.play = StartStop(self.midioutport,stopTic=self.stopTic) # it auto-starts, no need of rt.start()
 
@@ -120,15 +123,25 @@ class PedalBoardReader(object):
                     if len(self.dev.active_keys()) > 0:
                         if self.dev.active_keys()[0] in self.ctrl_keys:
                             logging.debug('Get %s ' % self.ctrl_keys[self.dev.active_keys()[0]])                                
+                            
+                            ## 20210108 drop non registered key
+                            if len(self.dev.active_keys()) == 0:                                
+                                continue
+
+                            if not self.dev.active_keys()[0] in self.ctrl_keys:                                
+                                continue
+                            ##############################################################
+                            # Play Note
+                            ##############################################################
+                            if self.ctrl_keys[self.dev.active_keys()[0]] in self.notemapping:
+                                logging.debug('PLAY NOTE %s' % (self.notemapping[self.ctrl_keys[self.dev.active_keys()[0]]]))
+                                #self.midioutport.send(mido.Message('start'))
+                                self.midioutport.send(mido.Message('note_on', note=self.midinotes[self.notemapping[self.ctrl_keys[self.dev.active_keys()[0]]]], velocity=100))
+                                self.midioutport.send(mido.Message('note_off', note=self.midinotes[self.notemapping[self.ctrl_keys[self.dev.active_keys()[0]]]], velocity=0))
+
                             ##############################################################
                             # TAP TEMPO
                             ##############################################################
-                            ## 20210108 drop non registered key
-                            if len(self.dev.active_keys()) == 0:
-                                continue
-                            if not self.dev.active_keys()[0] in self.ctrl_keys:
-                                continue
-
                             if self.ctrl_keys[self.dev.active_keys()[0]] == "TAP_TEMPO":
                                 if prevelapse is None:
                                     prevelapse = perf_counter()
@@ -491,6 +504,7 @@ def readConfigFile(configfile=None):
     fb = []
     midi = None
     keyconfig = {}
+    notemapping = {}
     stopTic = 0
     
     if os.path.isfile(configfile):
@@ -512,17 +526,11 @@ def readConfigFile(configfile=None):
                 midi = config['Midi']['digitakt']
 
         for b in fb:
-            keys = {}
-            if b in config.sections():
-                if 'START_STOP' in config[b]:
-                    keys[int(config[b]['START_STOP'])] = 'START_STOP'
-                if 'TAP_TEMPO' in config[b]:
-                    keys[int(config[b]['TAP_TEMPO'])] = 'TAP_TEMPO'
-                if 'NEXT_PGM' in config[b]:
-                    keys[int(config[b]['NEXT_PGM'])] = 'NEXT_PGM'
-                ## 20210109 Add reset button
-                if 'RESET' in config[b]:
-                    keys[int(config[b]['RESET'])] = 'RESET'
+            keys = {}            
+            if b in config.sections():                
+                for key in list(config[b]):
+                    keys[int(config[b][key])] = key.upper()
+
                 keyconfig[b] = keys
 
             elif 'Buttons' in config.sections():
@@ -537,9 +545,13 @@ def readConfigFile(configfile=None):
                     keys[int(config['Buttons']['RESET'])] = 'RESET'
                 keyconfig[b] = keys
 
-        return(True,fb,midi,keyconfig,stopTic)
+        if 'MidiNotes' in config.sections():
+            for key in list(config['MidiNotes']):
+                notemapping[key.upper()] = config['MidiNotes'][key] 
+
+        return(True,fb,midi,keyconfig,stopTic,notemapping)
     else:
-        return(False,None,None,None,None)
+        return(False,None,None,None,None,None)
 
 def main():
     arg_analyze=decodeArgs()
@@ -560,7 +572,7 @@ def main():
 
     configfile = arg_analyze.config
 
-    rc,footboards,mididevice,keyconfig,stopTic =  readConfigFile(configfile)
+    rc,footboards,mididevice,keyconfig,stopTic,notemapping =  readConfigFile(configfile)
 
     if not rc:
         logging.error('07 - No suitable config found in %s' % configfile)
@@ -651,8 +663,7 @@ def main():
     readers = []
     for pb in allpb:
         logging.debug('KEYS %s - StopTic %s' % (keyconfig[allpb[pb][1]],stopTic))
-        readers.append(PedalBoardReader(dev=allpb[pb][0],oscclient=oscclient,midioutport=midioutport,getbank=getbank,ctrl_keys=keyconfig[allpb[pb][1]],stopTic=stopTic))
-        logging.debug('AFTER Instance PedalBoardReader')
+        readers.append(PedalBoardReader(dev=allpb[pb][0],oscclient=oscclient,midioutport=midioutport,getbank=getbank,ctrl_keys=keyconfig[allpb[pb][1]],stopTic=stopTic,notemapping=notemapping))        
 
     readthreads = []
 
