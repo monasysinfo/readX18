@@ -42,6 +42,7 @@ DIGITONECNX=1
 DIGITAKTCNX=1
 KORGCNX=1
 
+NBTRY=10
 
 f_getMidiId(){
 	KEYSTEPID=$(aconnect -l|grep "^client.*$KEYSTEP"|awk '{print $2}')
@@ -78,13 +79,20 @@ f_controlConnectMidi(){
 
 aconnect -x
 
-while :
+while [ $NBTRY -gt 0 ]
 do
 	rc=$(f_controlConnectMidi)	
 	[[ $(echo $rc|awk '{print $1}') = 0 ]] && break
 	printf "KO\n$rc\n"
 	sleep 5
+	((NBTRY-=1))
 done
+
+if [ $NBTRY -eq 0 ]
+then
+	printf "ABORT Connection\n"
+	exit 0
+fi
 
 printf "OK \n$rc\n"
 f_getMidiId
