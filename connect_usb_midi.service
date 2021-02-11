@@ -1,0 +1,20 @@
+[Unit]
+Description=Midi connections
+After=network-online.target
+StartLimitIntervalSec=500
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+User=pi
+Group=pi
+UMask=007
+
+ExecStart=/usr/bin/bash /home/pi/devop/readX18/CONNECT_USB_MIDI.sh 
+
+# Configures the time to wait before service is stopped forcefully.
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target
