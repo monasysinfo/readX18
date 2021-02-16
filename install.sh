@@ -30,5 +30,8 @@ sudo systemctl status readPBsendToMIDI.service
 #MAJ Script de gestion bouton ON/OFF boitier argon
 sudo curl https://download.argon40.com/argon1.sh | bash
 
+sudo apt update
+sudo apt full-upgrade
+
 
 

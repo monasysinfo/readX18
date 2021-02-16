@@ -29,5 +29,7 @@ fi
 ##
 alias ll='ls -lrt'
 #vncserver -geometry 1920x1080
+#vncserver -kill :1
+
 
 

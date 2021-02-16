@@ -562,7 +562,8 @@ def main():
     logfile  = arg_analyze.logfile
 
     footboards = None
-    mididevice = None
+    mididevice = None    
+    
     #ctrl_keys = {82:"MUTE_ALL",79:"UNMUTE_ALL",76:"START_STOP",73:"TAP_TEMPO",83:"NEXT_PGM",86:"PREV_PGM"}
 
     if logfile == 'None' :
@@ -584,6 +585,7 @@ def main():
     ############################################    
     oscclient = None
     try:
+        logging.debug('Opening SimpleUDPClient')
         oscclient = SimpleUDPClient(ipad_ip, ipad_osc_port)
     except:
         E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
@@ -592,20 +594,28 @@ def main():
     ######################################################
     # Attempt to send OSC to OSC App to validate connexion
     ######################################################
-    retry = RETRY
+    retry = 10
     E = None
     while retry > 0:
         try:
+            logging.debug('Send OSC Message')
             oscclient.send_message('/Connexion/value', 'Connected')
             break
-        except:
+        except (OSError) as err:
+            if err.errno == 101: ## No network
+                logging.debug('NO NETWORK %s' % (err.strerror))
+                oscclient = None
+                break
+            
+        except :
             E=traceback.format_exception(sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
+            logging.debug(E)
             retry -= 1
             time.sleep(WAIT)
 
-    if retry <= 0:
+    if retry <= 0 or oscclient is None:
         logging.error("02- cannot connect to IPAD %s" % E)
-        exit(-1)
+        # exit(-1)
     else:
         logging.info('Connected to IPAD')
         
@@ -655,7 +665,8 @@ def main():
     ##########################################
     # Launch HeartBeat
     ##########################################
-    hb = HeartBeat(.3,"/readpb/led",oscclient,send_osc)
+    if oscclient is not None:
+        hb = HeartBeat(.3,"/readpb/led",oscclient,send_osc)
 
     ##########################################
     # Launch pedal board reader

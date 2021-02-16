@@ -14,7 +14,6 @@ colorama==0.3.7
 colorzero==1.1
 cookies==2.2.1
 cryptography==2.6.1
-cupshelpers==1.0
 docutils==0.14
 drumhat==0.1.0
 entrypoints==0.3
@@ -59,7 +58,6 @@ Pillow==5.4.1
 psutil==5.5.1
 pycairo==1.16.2
 pycrypto==2.6.1
-pycups==1.9.73
 pygame==2.0.0
 Pygments==2.3.1
 PyGObject==3.30.4
@@ -68,7 +66,6 @@ PyJWT==1.7.0
 pylint==2.2.2
 pyOpenSSL==19.0.0
 pyserial==3.4
-pysmbc==1.0.15.6
 python-osc==1.7.4
 python-rtmidi==1.4.6
 pyxdg==0.25
