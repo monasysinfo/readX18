@@ -185,6 +185,11 @@ class BridgeX18toOSC(object):
                     oscpath = self.refreshOSC[refresh].format(channel=ch)
                     client.send(OSC.OSCMessage(oscpath))
 
+            elif refresh == 'chmute':
+                for ch in range(1,17):           
+                    oscpath = self.refreshOSC[refresh].format(channel=ch)
+                    client.send(OSC.OSCMessage(oscpath))
+
             elif refresh == 'mainfader':
                 oscpath = self.refreshOSC[refresh]
                 client.send(OSC.OSCMessage(oscpath))
@@ -313,7 +318,7 @@ if __name__ == '__main__':
     logfile  = arg_analyze.logfile
     configfile = arg_analyze.config
 
-    refreshOSC = {'buses':None,'main':None,'returnfader':None,'returnmute':None,'mainfader':None,'mainmute':None}
+    refreshOSC = {'buses':None, 'main':None, 'returnfader':None, 'returnmute':None, 'mainfader':None, 'mainmute':None, 'chmute':None}
 
     if logfile == 'None' :
         logging.basicConfig(level=loglevel, format='%(asctime)s - %(levelname)s - readX18 : %(message)s', datefmt='%Y%m%d%I%M%S ')
